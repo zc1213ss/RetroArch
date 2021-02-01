@@ -30,7 +30,7 @@
 #include "cocoa/cocoa_common.h"
 #include "cocoa/apple_platform.h"
 
-#if defined(HAVE_COCOA_METAL)
+#if defined(HAVE_METAL)
 #include "../../gfx/common/metal_common.h"
 #endif
 
@@ -275,16 +275,20 @@ static char **waiting_argv;
    {
       case APPLE_VIEW_TYPE_VULKAN:
        case APPLE_VIEW_TYPE_METAL:
+#ifdef HAVE_METAL
          {
             MetalView *v = [MetalView new];
             v.paused = YES;
             v.enableSetNeedsDisplay = NO;
             _renderView = v;
          }
+#endif
          break;
 
        case APPLE_VIEW_TYPE_OPENGL:
+#if defined(HAVE_OPENGL)
          _renderView = [CocoaView get];
+#endif
          break;
 
        case APPLE_VIEW_TYPE_NONE:
