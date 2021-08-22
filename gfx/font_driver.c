@@ -15,6 +15,7 @@
  */
 
 #include <stdlib.h>
+#include <math.h>
 
 #ifdef HAVE_CONFIG_H
 #include "../config.h"
@@ -23,7 +24,7 @@
 #include "font_driver.h"
 #include "video_thread_wrapper.h"
 
-#include "../configuration.h"
+#include "../retroarch.h"
 #include "../verbosity.h"
 
 static const font_renderer_driver_t *font_backends[] = {
@@ -34,7 +35,7 @@ static const font_renderer_driver_t *font_backends[] = {
    &coretext_font_renderer,
 #endif
 #ifdef HAVE_STB_FONT
-#if defined(VITA) || defined(WIIU) || defined(ANDROID) || defined(_WIN32) && !defined(_XBOX) && !defined(_MSC_VER) || (defined(_WIN32) && !defined(_XBOX) && defined(_MSC_VER) && _MSC_VER > 1400) || defined(__CELLOS_LV2__) || defined(HAVE_LIBNX) || defined (HAVE_EMSCRIPTEN)
+#if defined(VITA) || defined(WIIU) || defined(ANDROID) || (defined(_WIN32) && !defined(_XBOX) && !defined(_MSC_VER) && _MSC_VER >= 1400) || (defined(_WIN32) && !defined(_XBOX) && defined(_MSC_VER)) || defined(HAVE_LIBNX) || defined(__linux__) || defined (HAVE_EMSCRIPTEN) || defined(__APPLE__) || defined(HAVE_ODROIDGO2) || defined(__PS3__)
    &stb_unicode_font_renderer,
 #else
    &stb_font_renderer,
@@ -44,6 +45,7 @@ static const font_renderer_driver_t *font_backends[] = {
    NULL
 };
 
+/* TODO/FIXME - global */
 static void *video_font_driver = NULL;
 
 int font_renderer_create_default(
@@ -70,9 +72,9 @@ int font_renderer_create_default(
          *drv = font_backends[i];
          return 1;
       }
-      else
-         RARCH_ERR("Failed to create rendering backend: %s.\n",
-               font_backends[i]->ident);
+
+      RARCH_ERR("[Font]: Failed to create rendering backend: %s.\n",
+            font_backends[i]->ident);
    }
 
    *drv    = NULL;
@@ -117,9 +119,7 @@ static bool d3d8_font_init_first(
 
 #ifdef HAVE_D3D9
 static const font_renderer_t *d3d9_font_backends[] = {
-#if defined(_XBOX)
-   &d3d_xbox360_font,
-#elif defined(_WIN32) && defined(HAVE_D3DX)
+#if defined(_WIN32) && defined(HAVE_D3DX)
    &d3d_win32_font,
 #endif
    NULL
@@ -151,12 +151,40 @@ static bool d3d9_font_init_first(
 }
 #endif
 
-#ifdef HAVE_OPENGL
+#ifdef HAVE_OPENGL1
+static const font_renderer_t *gl1_font_backends[] = {
+   &gl1_raster_font,
+   NULL,
+};
+
+static bool gl1_font_init_first(
+      const void **font_driver, void **font_handle,
+      void *video_data, const char *font_path,
+      float font_size, bool is_threaded)
+{
+   unsigned i;
+
+   for (i = 0; gl1_font_backends[i]; i++)
+   {
+      void *data = gl1_font_backends[i]->init(
+            video_data, font_path, font_size,
+            is_threaded);
+
+      if (!data)
+         continue;
+
+      *font_driver = gl1_font_backends[i];
+      *font_handle = data;
+      return true;
+   }
+
+   return false;
+}
+#endif
+
+#if defined(HAVE_OPENGL)
 static const font_renderer_t *gl_font_backends[] = {
    &gl_raster_font,
-#if defined(HAVE_LIBDBGFONT)
-   &libdbg_font,
-#endif
    NULL,
 };
 
@@ -177,6 +205,37 @@ static bool gl_font_init_first(
          continue;
 
       *font_driver = gl_font_backends[i];
+      *font_handle = data;
+      return true;
+   }
+
+   return false;
+}
+#endif
+
+#ifdef HAVE_OPENGL_CORE
+static const font_renderer_t *gl_core_font_backends[] = {
+   &gl_core_raster_font,
+   NULL,
+};
+
+static bool gl_core_font_init_first(
+      const void **font_driver, void **font_handle,
+      void *video_data, const char *font_path,
+      float font_size, bool is_threaded)
+{
+   unsigned i;
+
+   for (i = 0; gl_core_font_backends[i]; i++)
+   {
+      void *data = gl_core_font_backends[i]->init(
+            video_data, font_path, font_size,
+            is_threaded);
+
+      if (!data)
+         continue;
+
+      *font_driver = gl_core_font_backends[i];
       *font_handle = data;
       return true;
    }
@@ -278,6 +337,7 @@ static bool vga_font_init_first(
 }
 #endif
 
+#ifdef HAVE_GDI
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
 static const font_renderer_t *gdi_font_backends[] = {
    &gdi_font,
@@ -307,6 +367,7 @@ static bool gdi_font_init_first(
 
    return false;
 }
+#endif
 #endif
 
 #ifdef HAVE_VULKAN
@@ -554,7 +615,7 @@ static bool ctr_font_init_first(
 }
 #endif
 
-#ifdef HAVE_LIBNX 
+#ifdef HAVE_LIBNX
 static const font_renderer_t *switch_font_backends[] = {
    &switch_font,
    NULL
@@ -626,10 +687,20 @@ static bool font_init_first(
 
    switch (api)
    {
+#ifdef HAVE_OPENGL1
+      case FONT_DRIVER_RENDER_OPENGL1_API:
+         return gl1_font_init_first(font_driver, font_handle,
+               video_data, font_path, font_size, is_threaded);
+#endif
 #ifdef HAVE_OPENGL
       case FONT_DRIVER_RENDER_OPENGL_API:
          return gl_font_init_first(font_driver, font_handle,
                video_data, font_path, font_size, is_threaded);
+#endif
+#ifdef HAVE_OPENGL_CORE
+      case FONT_DRIVER_RENDER_OPENGL_CORE_API:
+         return gl_core_font_init_first(font_driver, font_handle,
+                                        video_data, font_path, font_size, is_threaded);
 #endif
 #ifdef HAVE_VULKAN
       case FONT_DRIVER_RENDER_VULKAN_API:
@@ -701,10 +772,12 @@ static bool font_init_first(
          return switch_font_init_first(font_driver, font_handle,
                video_data, font_path, font_size, is_threaded);
 #endif
+#ifdef HAVE_GDI
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
       case FONT_DRIVER_RENDER_GDI:
          return gdi_font_init_first(font_driver, font_handle,
                video_data, font_path, font_size, is_threaded);
+#endif
 #endif
 #ifdef DJGPP
       case FONT_DRIVER_RENDER_VGA:
@@ -729,22 +802,30 @@ static bool font_init_first(
  * Neutral :
  * 0020 - 002F : 001xxxxx (c & 0xE0) == 0x20
  * Arabic:
- * 0600 - 07FF : 11011xxx (c & 0xF8) == 0xD8 (2 bytes)
- * 0800 - 08FF : 11100000 101000xx  c == 0xE0 && (c1 & 0xAC) == 0xA0 (3 bytes) */
+ * 0600 - 06FF : 110110xx (c & 0xFC) == 0xD8 (2 bytes) */
 
 /* clang-format off */
 #define IS_ASCII(p)        ((*(p)&0x80) == 0x00)
 #define IS_MBSTART(p)      ((*(p)&0xC0) == 0xC0)
 #define IS_MBCONT(p)       ((*(p)&0xC0) == 0x80)
 #define IS_DIR_NEUTRAL(p)  ((*(p)&0xE0) == 0x20)
-#define IS_ARABIC0(p)      ((*(p)&0xF8) == 0xD8)
-#define IS_ARABIC1(p)      ((*(p) == 0xE0) && ((*((p) + 1) & 0xAC) == 0xA0))
-#define IS_ARABIC(p)       (IS_ARABIC0(p) || IS_ARABIC1(p))
+#define IS_ARABIC(p)       ((*(p)&0xFC) == 0xD8)
 #define IS_RTL(p)          IS_ARABIC(p)
+#define GET_ID_ARABIC(p)   (((unsigned char)(p)[0] << 6) | ((unsigned char)(p)[1] & 0x3F))
 
 /* 0x0620 to 0x064F */
-static const unsigned arabic_shape_map[0x50 - 0x20][0x4] = {
-   { 0 },                              /* 0x0620 */
+static const unsigned arabic_shape_map[0x100][0x4] = {
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x0600 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x0610 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+   { 0 },                               /* 0x0620 */
    { 0xFE80 },
    { 0xFE81, 0xFE82 },
    { 0xFE83, 0xFE84 },
@@ -770,128 +851,225 @@ static const unsigned arabic_shape_map[0x50 - 0x20][0x4] = {
    { 0xFEB9, 0xFEBA, 0xFEBB, 0xFEBC },
    { 0xFEBD, 0xFEBE, 0xFEBF, 0xFEC0 },
    { 0xFEC1, 0xFEC2, 0xFEC3, 0xFEC4 },
-   { 0xFEC5, 0xFEC6, 0xFEC7, 0xFEC8 },
 
+   { 0xFEC5, 0xFEC6, 0xFEC7, 0xFEC8 },
    { 0xFEC9, 0xFECA, 0xFECB, 0xFECC },
    { 0xFECD, 0xFECE, 0xFECF, 0xFED0 },
    { 0 },
-   { 0 },
-   { 0 },
-   { 0 },
-   { 0 },
-   { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
 
-   { 0xFED1, 0xFED2, 0xFED3, 0xFED4 }, /* 0x0640 */
+   { 0 },                               /* 0x0640 */
+   { 0xFED1, 0xFED2, 0xFED3, 0xFED4 },
    { 0xFED5, 0xFED6, 0xFED7, 0xFED8 },
    { 0xFED9, 0xFEDA, 0xFEDB, 0xFEDC },
    { 0xFEDD, 0xFEDE, 0xFEDF, 0xFEE0 },
    { 0xFEE1, 0xFEE2, 0xFEE3, 0xFEE4 },
    { 0xFEE5, 0xFEE6, 0xFEE7, 0xFEE8 },
    { 0xFEE9, 0xFEEA, 0xFEEB, 0xFEEC },
-   { 0xFEED, 0xFEEE },
 
+   { 0xFEED, 0xFEEE },
    { 0xFEEF, 0xFEF0, 0xFBE8, 0xFBE9 },
    { 0xFEF1, 0xFEF2, 0xFEF3, 0xFEF4 },
+   { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x0650 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x0660 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x0670 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+   { 0 }, { 0 },
+   { 0xFB56, 0xFB57, 0xFB58, 0xFB59 },
+   { 0 },
+
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x0680 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x0690 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x06A0 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+   { 0 },
+   { 0xFB8E, 0xFB8F, 0xFB90, 0xFB91 },
+   { 0 }, { 0 },
+
+   { 0 }, { 0 }, { 0 },
+   { 0xFB92, 0xFB93, 0xFB94, 0xFB95 },
+
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x06B0 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x06C0 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+   { 0xFBFC, 0xFBFD, 0xFBFE, 0xFBFF },
+   { 0 }, { 0 }, { 0 },
+
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x06D0 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x06E0 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+
+
+   { 0 }, { 0 }, { 0 }, { 0 },          /* 0x06F0 */
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
+   { 0 }, { 0 }, { 0 }, { 0 },
 };
 /* clang-format on */
 
 static INLINE unsigned font_get_replacement(const char* src, const char* start)
 {
-   if ((*src & 0xFC) == 0xD8) /* 0x0600 to 0x06FF */
+   if (IS_ARABIC(src)) /* 0x0600 to 0x06FF */
    {
       unsigned      result         = 0;
       bool          prev_connected = false;
       bool          next_connected = false;
-      unsigned char id             = (src[0] << 6) | (src[1] & 0x3F);
-      const char*   prev1          = src - 2;
-      const char*   prev2          = src - 4;
+      unsigned char id             = GET_ID_ARABIC(src);
+      const char*   prev           = src - 2;
+      const char*   next           = src + 2;
 
-      if (id < 0x21 || id > 0x4A)
-         return 0;
-
-      if (prev2 < start)
+      if ((prev >= start) && IS_ARABIC(prev))
       {
-         prev2 = NULL;
-         if (prev1 < start)
-            prev1 = NULL;
-      }
+         unsigned char prev_id = GET_ID_ARABIC(prev);
 
-      if (prev1 && (*prev1 & 0xFC) == 0xD8)
-      {
-         unsigned char prev1_id = 0;
+         /* nonspacing diacritics 0x4b -- 0x5f */
+         while (prev_id > 0x4A && prev_id < 0x60)
+         {
+            prev -= 2;
+            if ((prev >= start) && IS_ARABIC(prev))
+               prev_id = GET_ID_ARABIC(prev);
+            else
+               break;
+         }
 
-         if (prev1)
-            prev1_id = (prev1[0] << 6) | (prev1[1] & 0x3F);
 
-         if (prev1_id == 0x44)
+         if (prev_id == 0x44) /* Arabic Letter Lam */
          {
             unsigned char prev2_id = 0;
+            const char*   prev2    = prev - 2;
 
-            if (prev2)
+            if (prev2 >= start)
                prev2_id = (prev2[0] << 6) | (prev2[1] & 0x3F);
 
-            if (prev2_id > 0x20 || prev2_id < 0x50)
-               prev_connected = !!arabic_shape_map[prev2_id - 0x20][2];
+            /* nonspacing diacritics 0x4b -- 0x5f */
+            while (prev2_id > 0x4A && prev2_id < 0x60)
+            {
+               prev2 -= 2;
+               if ((prev2 >= start) && IS_ARABIC(prev2))
+                  prev2_id = GET_ID_ARABIC(prev2);
+               else
+                  break;
+            }
+
+            prev_connected = !!arabic_shape_map[prev2_id][2];
 
             switch (id)
             {
-               case 0x22:
+               case 0x22: /* Arabic Letter Alef with Madda Above */
                   return 0xFEF5 + prev_connected;
-               case 0x23:
+               case 0x23: /* Arabic Letter Alef with Hamza Above */
                   return 0xFEF7 + prev_connected;
-               case 0x25:
+               case 0x25: /* Arabic Letter Alef with Hamza Below */
                   return 0xFEF9 + prev_connected;
-               case 0x27:
+               case 0x27: /* Arabic Letter Alef */
                   return 0xFEFB + prev_connected;
             }
          }
-         if (prev1_id > 0x20 || prev1_id < 0x50)
-            prev_connected = !!arabic_shape_map[prev1_id - 0x20][2];
+         prev_connected = !!arabic_shape_map[prev_id][2];
       }
 
-      if ((src[2] & 0xFC) == 0xD8)
+      if (IS_ARABIC(next))
       {
-         unsigned char next_id = (src[2] << 6) | (src[3] & 0x3F);
+         unsigned char next_id = GET_ID_ARABIC(next);
 
-         if (next_id > 0x20 || next_id < 0x50)
-            next_connected = true;
+         /* nonspacing diacritics 0x4b -- 0x5f */
+         while (next_id > 0x4A && next_id < 0x60)
+         {
+            next += 2;
+            if (IS_ARABIC(next))
+               next_id = GET_ID_ARABIC(next);
+            else
+               break;
+         }
+
+         next_connected = !!arabic_shape_map[next_id][1];
       }
 
-      result = arabic_shape_map[id - 0x20][prev_connected | (next_connected << 1)];
+      result = arabic_shape_map[id][prev_connected | (next_connected << 1)];
 
       if (result)
          return result;
 
-      return arabic_shape_map[id - 0x20][prev_connected];
+      return arabic_shape_map[id][prev_connected];
    }
 
    return 0;
 }
 
-static char* font_driver_reshape_msg(const char* msg)
+static char* font_driver_reshape_msg(const char* msg, unsigned char *buffer, size_t buffer_size)
 {
-   /* worst case transformations are 2 bytes to 4 bytes */
-   unsigned char*       buffer  = (unsigned char*)malloc((strlen(msg) * 2) + 1);
+   unsigned char*       dst_buffer = buffer;
    const unsigned char* src     = (const unsigned char*)msg;
-   unsigned char*       dst     = (unsigned char*)buffer;
+   unsigned char*       dst;
    bool                 reverse = false;
+   size_t              msg_size = (strlen(msg) * 2) + 1;
+
+   /* fallback to heap allocated buffer if the buffer is too small */
+   /* worst case transformations are 2 bytes to 4 bytes -- aliaspider */
+   if (buffer_size < msg_size)
+      dst_buffer = (unsigned char*)malloc(msg_size);
+
+   dst = (unsigned char*)dst_buffer;
 
    while (*src || reverse)
    {
       if (reverse)
       {
          src--;
-         while (IS_MBCONT(src))
+         while (src > (const unsigned char*)msg && IS_MBCONT(src))
             src--;
 
-         if (IS_RTL(src) || IS_DIR_NEUTRAL(src))
+         if (src >= (const unsigned char*)msg && (IS_RTL(src) || IS_DIR_NEUTRAL(src)))
          {
             unsigned replacement = font_get_replacement((const char*)src, msg);
             if (replacement)
             {
                if (replacement < 0x80)
                   *dst++ = replacement;
-               else if (replacement < 0x8000)
+               else if (replacement < 0x800)
                {
                   *dst++ = 0xC0 | (replacement >> 6);
                   *dst++ = 0x80 | (replacement & 0x3F);
@@ -948,31 +1126,33 @@ static char* font_driver_reshape_msg(const char* msg)
 
    *dst = '\0';
 
-   return (char*)buffer;
+   return (char*)dst_buffer;
 }
 #endif
 
 void font_driver_render_msg(
-      video_frame_info_t *video_info,
-      void *font_data,
+      void *data,
       const char *msg,
-      const struct font_params *params)
+      const void *_params,
+      void *font_data)
 {
-   font_data_t *font = (font_data_t*)(font_data 
+   const struct font_params *params = (const struct font_params*)_params;
+   font_data_t                *font = (font_data_t*)(font_data
          ? font_data : video_font_driver);
 
    if (msg && *msg && font && font->renderer && font->renderer->render_msg)
    {
 #ifdef HAVE_LANGEXTRA
-      char *new_msg = font_driver_reshape_msg(msg);
+      unsigned char tmp_buffer[64];
+      char *new_msg = font_driver_reshape_msg(msg, tmp_buffer, sizeof(tmp_buffer));
 #else
       char *new_msg = (char*)msg;
 #endif
-
-      font->renderer->render_msg(video_info,
+      font->renderer->render_msg(data,
             font->renderer_data, new_msg, params);
 #ifdef HAVE_LANGEXTRA
-      free(new_msg);
+      if (new_msg != (char*)tmp_buffer)
+         free(new_msg);
 #endif
    }
 }
@@ -985,21 +1165,87 @@ void font_driver_bind_block(void *font_data, void *block)
       font->renderer->bind_block(font->renderer_data, block);
 }
 
-void font_driver_flush(unsigned width, unsigned height, void *font_data,
-      video_frame_info_t *video_info)
+void font_driver_flush(unsigned width, unsigned height, void *font_data)
 {
    font_data_t *font = (font_data_t*)(font_data ? font_data : video_font_driver);
    if (font && font->renderer && font->renderer->flush)
-      font->renderer->flush(width, height, font->renderer_data, video_info);
+      font->renderer->flush(width, height, font->renderer_data);
 }
 
 int font_driver_get_message_width(void *font_data,
       const char *msg, unsigned len, float scale)
 {
    font_data_t *font = (font_data_t*)(font_data ? font_data : video_font_driver);
+   if (len == 0 && msg)
+      len = (unsigned)strlen(msg);
    if (font && font->renderer && font->renderer->get_message_width)
       return font->renderer->get_message_width(font->renderer_data, msg, len, scale);
    return -1;
+}
+
+int font_driver_get_line_height(void *font_data, float scale)
+{
+   struct font_line_metrics *metrics = NULL;
+   font_data_t *font = (font_data_t*)(font_data ? font_data : video_font_driver);
+
+   /* First try the line metrics implementation */
+   if (font && font->renderer && font->renderer->get_line_metrics)
+      if ((font->renderer->get_line_metrics(font->renderer_data, &metrics)))
+         return (int)roundf(metrics->height * scale);
+
+   /* Else return an approximation
+    * (uses a fudge of standard font metrics - mostly garbage...)
+    * > font_size = (width of 'a') / 0.6
+    * > line_height = font_size * 1.7f */
+   return (int)roundf(1.7f * (float)font_driver_get_message_width(font_data, "a", 1, scale) / 0.6f);
+}
+
+int font_driver_get_line_ascender(void *font_data, float scale)
+{
+   struct font_line_metrics *metrics = NULL;
+   font_data_t *font = (font_data_t*)(font_data ? font_data : video_font_driver);
+
+   /* First try the line metrics implementation */
+   if (font && font->renderer && font->renderer->get_line_metrics)
+      if ((font->renderer->get_line_metrics(font->renderer_data, &metrics)))
+         return (int)roundf(metrics->ascender * scale);
+
+   /* Else return an approximation
+    * (uses a fudge of standard font metrics - mostly garbage...)
+    * > font_size = (width of 'a') / 0.6
+    * > ascender = 1.58 * font_size * 0.75 */
+   return (int)roundf(1.58f * 0.75f * (float)font_driver_get_message_width(font_data, "a", 1, scale) / 0.6f);
+}
+
+int font_driver_get_line_descender(void *font_data, float scale)
+{
+   struct font_line_metrics *metrics = NULL;
+   font_data_t *font = (font_data_t*)(font_data ? font_data : video_font_driver);
+
+   /* First try the line metrics implementation */
+   if (font && font->renderer && font->renderer->get_line_metrics)
+      if ((font->renderer->get_line_metrics(font->renderer_data, &metrics)))
+         return (int)roundf(metrics->descender * scale);
+
+   /* Else return an approximation
+    * (uses a fudge of standard font metrics - mostly garbage...)
+    * > font_size = (width of 'a') / 0.6
+    * > descender = 1.58 * font_size * 0.25 */
+   return (int)roundf(1.58f * 0.25f * (float)font_driver_get_message_width(font_data, "a", 1, scale) / 0.6f);
+}
+
+int font_driver_get_line_centre_offset(void *font_data, float scale)
+{
+   struct font_line_metrics *metrics = NULL;
+   font_data_t *font = (font_data_t*)(font_data ? font_data : video_font_driver);
+
+   /* First try the line metrics implementation */
+   if (font && font->renderer && font->renderer->get_line_metrics)
+      if ((font->renderer->get_line_metrics(font->renderer_data, &metrics)))
+         return (int)roundf((metrics->ascender - metrics->descender) * 0.5f * scale);
+
+   /* Else return an approximation... */
+   return (int)roundf((1.58f * 0.5f * (float)font_driver_get_message_width(font_data, "a", 1, scale) / 0.6f) / 2.0f);
 }
 
 void font_driver_free(void *font_data)
@@ -1047,7 +1293,7 @@ font_data_t *font_driver_init_first(
 
    if (ok)
    {
-      font_data_t *font   = (font_data_t*)calloc(1, sizeof(*font));
+      font_data_t *font   = (font_data_t*)malloc(sizeof(*font));
       font->renderer      = (const font_renderer_t*)font_driver;
       font->renderer_data = font_handle;
       font->size          = font_size;
@@ -1059,20 +1305,21 @@ font_data_t *font_driver_init_first(
 
 void font_driver_init_osd(
       void *video_data,
+      const void *video_info_data,
       bool threading_hint,
       bool is_threaded,
       enum font_driver_render_api api)
 {
-   settings_t *settings = config_get_ptr();
-   if (video_font_driver)
+   const video_info_t *video_info = (const video_info_t*)video_info_data;
+   if (video_font_driver || !video_info)
       return;
 
    video_font_driver = font_driver_init_first(video_data,
-         *settings->paths.path_font ? settings->paths.path_font : NULL,
-         settings->floats.video_font_size, threading_hint, is_threaded, api);
+         *video_info->path_font ? video_info->path_font : NULL,
+         video_info->font_size, threading_hint, is_threaded, api);
 
    if (!video_font_driver)
-      RARCH_ERR("[font]: Failed to initialize OSD font.\n");
+      RARCH_ERR("[Font]: Failed to initialize OSD font.\n");
 }
 
 void font_driver_free_osd(void)

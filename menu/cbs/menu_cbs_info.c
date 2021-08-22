@@ -17,24 +17,28 @@
 
 #include "../menu_driver.h"
 #include "../menu_cbs.h"
+#include "../menu_dialog.h"
 
-#include "../widgets/menu_dialog.h"
-
-#ifndef BIND_ACTION_INFO
-#define BIND_ACTION_INFO(cbs, name) \
-   cbs->action_info = name; \
-   cbs->action_info_ident = #name;
-#endif
+#include "../../configuration.h"
 
 #ifdef HAVE_NETWORKING
 #include "../../network/netplay/netplay_discovery.h"
 #endif
 
+#ifndef BIND_ACTION_INFO
+#define BIND_ACTION_INFO(cbs, name) (cbs)->action_info = (name)
+#endif
+
 static int action_info_default(unsigned type, const char *label)
 {
    menu_displaylist_info_t info;
-   file_list_t *menu_stack      = menu_entries_get_menu_stack_ptr(0);
-   size_t selection             = menu_navigation_get_selection();
+   file_list_t *menu_stack       = menu_entries_get_menu_stack_ptr(0);
+   size_t selection              = menu_navigation_get_selection();
+   settings_t *settings          = config_get_ptr();
+#ifdef HAVE_AUDIOMIXER
+   bool        audio_enable_menu = settings->bools.audio_enable_menu;
+   bool audio_enable_menu_notice = settings->bools.audio_enable_menu_notice;
+#endif
 
    menu_displaylist_info_init(&info);
 
@@ -44,8 +48,13 @@ static int action_info_default(unsigned type, const char *label)
    info.label                   = strdup(
          msg_hash_to_str(MENU_ENUM_LABEL_INFO_SCREEN));
 
-   if (!menu_displaylist_ctl(DISPLAYLIST_HELP, &info))
+   if (!menu_displaylist_ctl(DISPLAYLIST_HELP, &info, settings))
       goto error;
+
+#ifdef HAVE_AUDIOMIXER
+   if (audio_enable_menu && audio_enable_menu_notice)
+      audio_driver_mixer_play_menu_sound(AUDIO_MIXER_SYSTEM_SLOT_NOTICE);
+#endif
 
    if (!menu_displaylist_process(&info))
       goto error;

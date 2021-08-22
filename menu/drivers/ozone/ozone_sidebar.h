@@ -1,7 +1,7 @@
 /*  RetroArch - A frontend for libretro.
  *  Copyright (C) 2011-2017 - Daniel De Matteis
  *  Copyright (C) 2014-2017 - Jean-André Santoni
- *  Copyright (C) 2016-2017 - Brad Parker
+ *  Copyright (C) 2016-2019 - Brad Parker
  *  Copyright (C) 2018      - Alfredo Monclús
  *  Copyright (C) 2018      - natinusala
  *
@@ -20,8 +20,6 @@
 #ifndef _OZONE_SIDEBAR_H
 #define _OZONE_SIDEBAR_H
 
-#include "ozone_texture.h"
-
 enum
 {
    OZONE_SYSTEM_TAB_MAIN = 0,
@@ -39,17 +37,12 @@ enum
    OZONE_SYSTEM_TAB_NETPLAY,
 #endif
    OZONE_SYSTEM_TAB_ADD,
+#if defined(HAVE_LIBRETRODB)
+   OZONE_SYSTEM_TAB_EXPLORE,
+#endif
 
    /* End of this enum - use the last one to determine num of possible tabs */
    OZONE_SYSTEM_TAB_LAST
 };
-
-extern enum msg_hash_enums ozone_system_tabs_value[OZONE_SYSTEM_TAB_LAST];
-
-extern enum menu_settings_type ozone_system_tabs_type[OZONE_SYSTEM_TAB_LAST];
-
-extern enum msg_hash_enums ozone_system_tabs_idx[OZONE_SYSTEM_TAB_LAST];
-
-extern unsigned ozone_system_tabs_icons[OZONE_SYSTEM_TAB_LAST];
 
 #endif

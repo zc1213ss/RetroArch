@@ -153,10 +153,8 @@ void d3d10_update_texture(
          &mapped_texture);
 
 #if 0
-   PERF_START();
    conv_rgb565_argb8888(mapped_texture.pData, data, width, height,
          mapped_texture.RowPitch, pitch);
-   PERF_STOP();
 #else
    dxgi_copy(
          width, height, format, pitch, data, texture->desc.Format,
@@ -246,7 +244,7 @@ bool d3d10_init_shader(
 
    if (vs_code && input_element_descs)
       D3D10CreateInputLayout(
-            device, 
+            device,
             (D3D10_INPUT_ELEMENT_DESC*)input_element_descs, num_elements, D3DGetBufferPointer(vs_code),
             D3DGetBufferSize(vs_code), &out->layout);
 

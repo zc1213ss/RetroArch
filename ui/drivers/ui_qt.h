@@ -1,7 +1,7 @@
 /*  RetroArch - A frontend for libretro.
  *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  *  Copyright (C) 2011-2017 - Daniel De Matteis
- *  Copyright (C) 2018 - Brad Parker
+ *  Copyright (C) 2016-2019 - Brad Parker
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -43,13 +43,26 @@
 #include <QSortFilterProxyModel>
 #include <QDir>
 
+#include "qt/filedropwidget.h"
+
+#ifndef CXX_BUILD
 extern "C" {
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "../../config.h"
+#endif
+
 #include <retro_assert.h>
 #include <retro_common_api.h>
 #include <queues/task_queue.h>
+
 #include "../ui_companion_driver.h"
-#include "../../gfx/video_driver.h"
+#include "../../retroarch.h"
+
+#ifndef CXX_BUILD
 }
+#endif
 
 #define ALL_PLAYLISTS_TOKEN "|||ALL|||"
 #define ICON_PATH "/xmb/dot-art/png/"
@@ -134,6 +147,9 @@ public:
    void reloadThumbnailPath(const QString path);
    void reloadSystemThumbnails(const QString system);
    void setThumbnailCacheLimit(int limit);
+   bool isSupportedImage(const QString path) const;
+   QString getPlaylistThumbnailsDir(const QString playlistName) const;
+   QString getSanitizedThumbnailName(QString label) const;
 
 signals:
    void imageLoaded(const QImage image, const QModelIndex &index, const QString &path);
@@ -149,30 +165,32 @@ private:
    QRegularExpression m_fileSanitizerRegex;
    ThumbnailType m_thumbnailType = THUMBNAIL_TYPE_BOXART;
    QString getThumbnailPath(const QModelIndex &index, QString type) const;
+   QString getThumbnailPath(const QHash<QString, QString> &hash, QString type) const;
    QString getCurrentTypeThumbnailPath(const QModelIndex &index) const;
    void getPlaylistItems(QString path);
    void loadImage(const QModelIndex &index, const QString &path);
 };
 
-class ThumbnailWidget : public QFrame
+class ThumbnailWidget : public QStackedWidget
 {
    Q_OBJECT
 public:
    ThumbnailWidget(QWidget *parent = 0);
+   ThumbnailWidget(ThumbnailType type, QWidget *parent = 0);
    ThumbnailWidget(const ThumbnailWidget& other) { retro_assert(false && "DONT EVER USE THIS"); }
 
-   QSize sizeHint() const;
-   void setSizeHint(QSize size);
+   void setPixmap(const QPixmap &pixmap, bool acceptDrops);
 signals:
-   void mouseDoubleClicked();
-   void mousePressed();
+   void filesDropped(const QImage& image, ThumbnailType type);
 private:
    QSize m_sizeHint;
+   ThumbnailType m_thumbnailType;
+   ThumbnailLabel *m_thumbnailLabel;
+   QLabel *m_dropIndicator;
 protected:
-   void paintEvent(QPaintEvent *event);
-   void resizeEvent(QResizeEvent *event);
-   void mouseDoubleClickEvent(QMouseEvent *event);
-   void mousePressEvent(QMouseEvent *event);
+   void dragEnterEvent(QDragEnterEvent *event);
+   void dragMoveEvent(QDragMoveEvent *event);
+   void dropEvent(QDropEvent *event);
 };
 
 class ThumbnailLabel : public QWidget
@@ -188,11 +206,11 @@ protected:
    void paintEvent(QPaintEvent *event);
    void resizeEvent(QResizeEvent *event);
 private:
-    void updateMargins();
+   void updateMargins();
 
-    QPixmap *m_pixmap;
-    int m_pixmapWidth;
-    int m_pixmapHeight;
+   QPixmap *m_pixmap;
+   int m_pixmapWidth;
+   int m_pixmapHeight;
 };
 
 class TreeView : public QTreeView
@@ -291,6 +309,13 @@ public:
    void setThumbnailVerticalAlign(const QString valign);
 };
 
+class FileSystemProxyModel : public QSortFilterProxyModel
+{
+protected:
+   virtual bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const;
+   void sort(int column, Qt::SortOrder order = Qt::AscendingOrder);
+};
+
 class MainWindow : public QMainWindow
 {
    Q_OBJECT
@@ -300,6 +325,12 @@ public:
    {
       VIEW_TYPE_ICONS,
       VIEW_TYPE_LIST
+   };
+
+   enum BrowserType
+   {
+      BROWSER_TYPE_PLAYLISTS,
+      BROWSER_TYPE_FILES
    };
 
    enum Theme
@@ -323,9 +354,12 @@ public:
    TreeView* dirTreeView();
    PlaylistModel* playlistModel();
    ListWidget* playlistListWidget();
+   QStackedWidget* centralWidget();
    TableView* contentTableView();
+   QTableView* fileTableView();
+   FileDropWidget* playlistViews();
    GridView* contentGridView();
-   QWidget* contentGridWidget();
+   QWidget* playlistViewsAndFooter();
    QWidget* searchWidget();
    QLineEdit* searchLineEdit();
    QComboBox* launchWithComboBox();
@@ -334,7 +368,7 @@ public:
    QToolButton* runPushButton();
    QToolButton* stopPushButton();
    QTabWidget* browserAndPlaylistTabWidget();
-   QVector<QHash<QString, QString> > getPlaylistDefaultCores();
+   QString getPlaylistDefaultCore(QString plName);
    ViewOptionsDialog* viewOptionsDialog();
    QSettings* settings();
    QVector<QHash<QString, QString> > getCoreInfo();
@@ -363,11 +397,13 @@ public:
    QString getCurrentPlaylistPath();
    QModelIndex getCurrentContentIndex();
    QHash<QString, QString> getCurrentContentHash();
+   QHash<QString, QString> getFileContentHash(const QModelIndex &index);
    static double lerp(double x, double y, double a, double b, double d);
    QString getSpecialPlaylistPath(SpecialPlaylist playlist);
    QVector<QPair<QString, QString> > getPlaylists();
    QString getScrubbedString(QString str);
    void setDefaultCustomProperties();
+   void setIconViewZoom(int zoomValue);
 
 signals:
    void thumbnailChanged(const QPixmap &pixmap);
@@ -401,10 +437,10 @@ public slots:
    void onStartCoreClicked();
    void onDropWidgetEnterPressed();
    void selectBrowserDir(QString path);
-   void resizeThumbnails(bool one, bool two, bool three);
-   void onResizeThumbnailOne();
-   void onResizeThumbnailTwo();
-   void onResizeThumbnailThree();
+   void setThumbnail(QString widgetName, QPixmap &pixmap, bool acceptDrop);
+   void onResizeThumbnailOne(QPixmap &pixmap, bool acceptDrop);
+   void onResizeThumbnailTwo(QPixmap &pixmap, bool acceptDrop);
+   void onResizeThumbnailThree(QPixmap &pixmap, bool acceptDrop);
    void appendLogMessage(const QString &msg);
    void onGotLogMessage(const QString &msg);
    void onGotStatusMessage(QString msg, unsigned priority, unsigned duration, bool flush);
@@ -416,13 +452,14 @@ public slots:
    void showWelcomeScreen();
    void onIconViewClicked();
    void onListViewClicked();
+   void onBoxartThumbnailClicked();
+   void onScreenshotThumbnailClicked();
+   void onTitleThumbnailClicked();
    void onTabWidgetIndexChanged(int index);
    void deleteCurrentPlaylistItem();
    void onFileDropWidgetContextMenuRequested(const QPoint &pos);
    void showAbout();
    void showDocs();
-   void updateRetroArchNightly();
-   void onUpdateRetroArchFinished(bool success);
    void onThumbnailPackExtractFinished(bool success);
    void deferReloadShaderParams();
    void downloadThumbnail(QString system, QString title, QUrl url = QUrl());
@@ -430,6 +467,7 @@ public slots:
    void downloadPlaylistThumbnails(QString playlistPath);
    void downloadNextPlaylistThumbnail(QString system, QString title, QString type, QUrl url = QUrl());
    void changeThumbnailType(ThumbnailType type);
+   void onThumbnailDropped(const QImage &image, ThumbnailType type);
 
 private slots:
    void onLoadCoreClicked(const QStringList &extensionFilters = QStringList());
@@ -439,10 +477,13 @@ private slots:
    void onCurrentTableItemDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight, const QVector<int> &roles);
    void onCurrentListItemChanged(QListWidgetItem *current, QListWidgetItem *previous);
    void onCurrentListItemDataChanged(QListWidgetItem *item);
-   void currentItemChanged(const QModelIndex &index);
+   void onCurrentItemChanged(const QModelIndex &index);
+   void onCurrentItemChanged(const QHash<QString, QString> &hash);
+   void onCurrentFileChanged(const QModelIndex &index);
    void onSearchEnterPressed();
    void onSearchLineEditEdited(const QString &text);
    void onContentItemDoubleClicked(const QModelIndex &index);
+   void onFileDoubleClicked(const QModelIndex &index);
    void onCoreLoadWindowClosed();
    void onTreeViewItemsSelected(QModelIndexList selectedIndexes);
    void onSearchResetClicked();
@@ -459,16 +500,10 @@ private slots:
    void onContributorsClicked();
    void onItemChanged();
    void onFileSystemDirLoaded(const QString &path);
+   void onFileBrowserTableDirLoaded(const QString &path);
    void onDownloadScroll(QString path);
    void onDownloadScrollAgain(QString path);
    int onExtractArchive(QString path, QString extractionDir, QString tempExtension, retro_task_callback_t cb);
-
-   void onUpdateNetworkError(QNetworkReply::NetworkError code);
-   void onUpdateNetworkSslErrors(const QList<QSslError> &errors);
-   void onRetroArchUpdateDownloadFinished();
-   void onUpdateDownloadProgress(qint64 bytesReceived, qint64 bytesTotal);
-   void onUpdateDownloadReadyRead();
-   void onUpdateDownloadCanceled();
 
    void onThumbnailDownloadNetworkError(QNetworkReply::NetworkError code);
    void onThumbnailDownloadNetworkSslErrors(const QList<QSslError> &errors);
@@ -502,14 +537,17 @@ private:
    bool isContentLessCore();
    bool updateCurrentPlaylistEntry(const QHash<QString, QString> &contentHash);
    int extractArchive(QString path);
-   void removeUpdateTempFiles();
    bool addDirectoryFilesToList(QProgressDialog *dialog, QStringList &list, QDir &dir, QStringList &extensions);
    void renamePlaylistItem(QListWidgetItem *item, QString newName);
    bool currentPlaylistIsSpecial();
    bool currentPlaylistIsAll();
+   void applySearch();
+   void updateItemsCount();
+   QString changeThumbnail(const QImage &image, QString type);
 
    PlaylistModel *m_playlistModel;
    QSortFilterProxyModel *m_proxyModel;
+   FileSystemProxyModel *m_proxyFileModel;
    LoadCoreWindow *m_loadCoreWindow;
    QTimer *m_timer;
    QString m_currentCore;
@@ -517,8 +555,12 @@ private:
    QLabel *m_statusLabel;
    TreeView *m_dirTree;
    QFileSystemModel *m_dirModel;
+   QFileSystemModel *m_fileModel;
    ListWidget *m_listWidget;
+   QStackedWidget *m_centralWidget;
    TableView *m_tableView;
+   QTableView *m_fileTableView;
+   FileDropWidget *m_playlistViews;
    QWidget *m_searchWidget;
    QLineEdit *m_searchLineEdit;
    QDockWidget *m_searchDock;
@@ -533,7 +575,6 @@ private:
    QPixmap *m_thumbnailPixmap;
    QPixmap *m_thumbnailPixmap2;
    QPixmap *m_thumbnailPixmap3;
-   QRegularExpression m_fileSanitizerRegex;
    QSettings *m_settings;
    ViewOptionsDialog *m_viewOptionsDialog;
    CoreInfoDialog *m_coreInfoDialog;
@@ -544,15 +585,14 @@ private:
    CoreInfoLabel *m_coreInfoLabel;
    CoreInfoWidget *m_coreInfoWidget;
    QDockWidget *m_logDock;
-   QWidget *m_logWidget;
+   QFrame *m_logWidget;
    LogTextEdit *m_logTextEdit;
    QVector<QByteArray> m_imageFormats;
    QListWidgetItem *m_historyPlaylistsItem;
    QIcon m_folderIcon;
    QString m_customThemeString;
    GridView *m_gridView;
-   QWidget *m_gridWidget;
-   QScrollArea *m_gridScrollArea;
+   QWidget *m_playlistViewsAndFooter;
    QWidget *m_gridLayoutWidget;
    QSlider *m_zoomSlider;
    int m_lastZoomSliderValue;
@@ -561,8 +601,6 @@ private:
    QProgressBar *m_gridProgressBar;
    QWidget *m_gridProgressWidget;
    QHash<QString, QString> m_currentGridHash;
-   ViewType m_lastViewType;
-   ThumbnailType m_lastThumbnailType;
    QPointer<ThumbnailWidget> m_currentGridWidget;
    int m_allPlaylistsListMaxCount;
    int m_allPlaylistsGridMaxCount;
@@ -596,6 +634,12 @@ private:
 
    QTimer *m_thumbnailTimer;
    GridItem m_gridItem;
+   BrowserType m_currentBrowser;
+   QRegExp m_searchRegExp;
+   QByteArray m_fileTableHeaderState;
+   QWidget *m_zoomWidget;
+   QString m_itemsCountLiteral;
+   QLabel *m_itemsCountLabel;
 
 protected:
    void closeEvent(QCloseEvent *event);
@@ -604,7 +648,9 @@ protected:
 
 Q_DECLARE_METATYPE(ThumbnailWidget)
 Q_DECLARE_METATYPE(QPointer<ThumbnailWidget>)
+#if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_SLANG) || defined(HAVE_HLSL)
 Q_DECLARE_METATYPE(struct video_shader_parameter*)
+#endif
 
 RETRO_BEGIN_DECLS
 
@@ -617,6 +663,8 @@ typedef struct ui_window_qt
 {
    MainWindow *qtWindow;
 } ui_window_qt_t;
+
+QStringList string_split_to_qt(QString str, char delim);
 
 RETRO_END_DECLS
 

@@ -18,6 +18,7 @@
 
 #include "softfilter.h"
 #include <stdlib.h>
+#include <string.h>
 
 #ifdef RARCH_INTERNAL
 #define softfilter_get_implementation normal2x_get_implementation
@@ -70,7 +71,7 @@ static void *normal2x_generic_create(const struct softfilter_config *config,
    (void)simd;
    (void)config;
    (void)userdata;
-   
+
    if (!filt) {
       return NULL;
    }
@@ -107,56 +108,72 @@ static void normal2x_generic_destroy(void *data)
 static void normal2x_work_cb_xrgb8888(void *data, void *thread_data)
 {
    struct softfilter_thread_data *thr = (struct softfilter_thread_data*)thread_data;
-   const uint32_t *input = (const uint32_t*)thr->in_data;
-   uint32_t *output = (uint32_t*)thr->out_data;
-   unsigned in_stride = (unsigned)(thr->in_pitch >> 2);
-   unsigned out_stride = (unsigned)(thr->out_pitch >> 2);
-   unsigned x, y;
-   
+   const uint32_t *input              = (const uint32_t*)thr->in_data;
+   uint32_t *output                   = (uint32_t*)thr->out_data;
+   uint32_t in_stride                 = (uint32_t)(thr->in_pitch >> 2);
+   uint32_t out_stride                = (uint32_t)(thr->out_pitch >> 2);
+   uint32_t x, y;
+
    for (y = 0; y < thr->height; ++y)
    {
       uint32_t *out_ptr = output;
       for (x = 0; x < thr->width; ++x)
       {
-         uint64_t colour = (uint64_t)*(input + x);
-         colour |= colour << 32;
-         
-         *(uint64_t *)(out_ptr) = colour;
-         *(uint64_t *)(out_ptr + out_stride) = colour;
-         
+         uint32_t *out_line_ptr = out_ptr;
+         uint32_t color         = *(input + x);
+         uint32_t row_color[2];
+
+         row_color[0] = color;
+         row_color[1] = color;
+
+         /* Row 1 */
+         memcpy(out_line_ptr, row_color, sizeof(row_color));
+         out_line_ptr += out_stride;
+
+         /* Row 2 */
+         memcpy(out_line_ptr, row_color, sizeof(row_color));
+
          out_ptr += 2;
       }
-      
-      input += in_stride;
-		output += out_stride << 1;
+
+      input  += in_stride;
+      output += out_stride << 1;
    }
 }
 
 static void normal2x_work_cb_rgb565(void *data, void *thread_data)
 {
    struct softfilter_thread_data *thr = (struct softfilter_thread_data*)thread_data;
-   const uint16_t *input = (const uint16_t*)thr->in_data;
-   uint16_t *output = (uint16_t*)thr->out_data;
-   unsigned in_stride = (unsigned)(thr->in_pitch >> 1);
-   unsigned out_stride = (unsigned)(thr->out_pitch >> 1);
-   unsigned x, y;
-   
+   const uint16_t *input              = (const uint16_t*)thr->in_data;
+   uint16_t *output                   = (uint16_t*)thr->out_data;
+   uint16_t in_stride                 = (uint16_t)(thr->in_pitch >> 1);
+   uint16_t out_stride                = (uint16_t)(thr->out_pitch >> 1);
+   uint16_t x, y;
+
    for (y = 0; y < thr->height; ++y)
    {
-      uint16_t * out_ptr = output;
+      uint16_t *out_ptr = output;
       for (x = 0; x < thr->width; ++x)
       {
-         uint32_t colour = (uint32_t)*(input + x);
-         colour |= colour << 16;
-         
-         *(uint32_t *)(out_ptr) = colour;
-         *(uint32_t *)(out_ptr + out_stride) = colour;
-         
+         uint16_t *out_line_ptr = out_ptr;
+         uint16_t color         = *(input + x);
+         uint16_t row_color[2];
+
+         row_color[0] = color;
+         row_color[1] = color;
+
+         /* Row 1 */
+         memcpy(out_line_ptr, row_color, sizeof(row_color));
+         out_line_ptr += out_stride;
+
+         /* Row 2 */
+         memcpy(out_line_ptr, row_color, sizeof(row_color));
+
          out_ptr += 2;
       }
-      
-      input += in_stride;
-		output += out_stride << 1;
+
+      input  += in_stride;
+      output += out_stride << 1;
    }
 }
 
@@ -172,14 +189,14 @@ static void normal2x_generic_packets(void *data,
     * every little helps when running on an o3DS... */
    struct filter_data *filt = (struct filter_data*)data;
    struct softfilter_thread_data *thr = (struct softfilter_thread_data*)&filt->workers[0];
-   
+
    thr->out_data = (uint8_t*)output;
    thr->in_data = (const uint8_t*)input;
    thr->out_pitch = output_stride;
    thr->in_pitch = input_stride;
    thr->width = width;
    thr->height = height;
-   
+
    if (filt->in_fmt == SOFTFILTER_FMT_XRGB8888) {
       packets[0].work = normal2x_work_cb_xrgb8888;
    } else if (filt->in_fmt == SOFTFILTER_FMT_RGB565) {
@@ -191,14 +208,14 @@ static void normal2x_generic_packets(void *data,
 static const struct softfilter_implementation normal2x_generic = {
    normal2x_generic_input_fmts,
    normal2x_generic_output_fmts,
-   
+
    normal2x_generic_create,
    normal2x_generic_destroy,
-   
+
    normal2x_generic_threads,
    normal2x_generic_output,
    normal2x_generic_packets,
-   
+
    SOFTFILTER_API_VERSION,
    "Normal2x",
    "normal2x",

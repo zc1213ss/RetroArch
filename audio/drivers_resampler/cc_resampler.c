@@ -29,6 +29,12 @@
 
 #include <audio/audio_resampler.h>
 
+#if (defined(__ARM_NEON__) && !defined(DONT_WANT_ARM_ASM_OPTIMIZATIONS)) || defined(HAVE_NEON)
+#ifndef HAVE_ARM_NEON_ASM_OPTIMIZATIONS
+#define HAVE_ARM_NEON_ASM_OPTIMIZATIONS
+#endif
+#endif
+
 /* Since SSE and NEON don't provide support for trigonometric functions
  * we approximate those with polynoms
  *
@@ -49,10 +55,9 @@
 
 typedef struct rarch_CC_resampler
 {
-   audio_frame_float_t buffer[4];
-
-   float distance;
    void (*process)(void *re, struct resampler_data *data);
+   audio_frame_float_t buffer[4];
+   float distance;
 } rarch_CC_resampler_t;
 
 #ifdef _MIPS_ARCH_ALLEGREX
@@ -149,7 +154,7 @@ done:
 }
 
 static void *resampler_CC_init(const struct resampler_config *config,
-      double bandwidth_mod, 
+      double bandwidth_mod,
       enum resampler_quality quality,
       resampler_simd_mask_t mask)
 {
@@ -345,7 +350,7 @@ static void resampler_CC_upsample(void *re_, struct resampler_data *data)
    data->output_frames = outp - (audio_frame_float_t*)data->data_out;
 }
 
-#elif defined (__ARM_NEON__) && !defined(DONT_WANT_ARM_OPTIMIZATIONS)
+#elif defined(HAVE_ARM_NEON_ASM_OPTIMIZATIONS)
 
 #define CC_RESAMPLER_IDENT "NEON"
 
@@ -357,13 +362,13 @@ size_t resampler_CC_upsample_neon  (float *outp, const float *inp,
 static void resampler_CC_downsample(void *re_, struct resampler_data *data)
 {
    data->output_frames = resampler_CC_downsample_neon(
-         data->data_out, data->data_in, re_, data->input_frames, data->ratio);
+         data->data_out, data->data_in, (struct rarch_CC_resampler*)re_, data->input_frames, data->ratio);
 }
 
 static void resampler_CC_upsample(void *re_, struct resampler_data *data)
 {
    data->output_frames = resampler_CC_upsample_neon(
-         data->data_out, data->data_in, re_, data->input_frames, data->ratio);
+         data->data_out, data->data_in, (struct rarch_CC_resampler*)re_, data->input_frames, data->ratio);
 }
 
 #else
@@ -488,7 +493,7 @@ static void resampler_CC_process(void *re_, struct resampler_data *data)
 }
 
 static void *resampler_CC_init(const struct resampler_config *config,
-      double bandwidth_mod, 
+      double bandwidth_mod,
       enum resampler_quality quality,
       resampler_simd_mask_t mask)
 {

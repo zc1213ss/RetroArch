@@ -23,19 +23,12 @@
 #define NETPLAY_HOST_STR_LEN 32
 #define NETPLAY_HOST_LONGSTR_LEN 256
 
-enum rarch_netplay_discovery_ctl_state
-{
-    RARCH_NETPLAY_DISCOVERY_CTL_NONE = 0,
-    RARCH_NETPLAY_DISCOVERY_CTL_LAN_SEND_QUERY,
-    RARCH_NETPLAY_DISCOVERY_CTL_LAN_GET_RESPONSES,
-    RARCH_NETPLAY_DISCOVERY_CTL_LAN_CLEAR_RESPONSES
-};
-
 struct netplay_host
 {
    struct sockaddr addr;
    socklen_t addrlen;
-
+   int  content_crc;
+   int  port;
    char address[NETPLAY_HOST_STR_LEN];
    char nick[NETPLAY_HOST_STR_LEN];
    char frontend[NETPLAY_HOST_STR_LEN];
@@ -43,8 +36,7 @@ struct netplay_host
    char core_version[NETPLAY_HOST_STR_LEN];
    char retroarch_version[NETPLAY_HOST_STR_LEN];
    char content[NETPLAY_HOST_LONGSTR_LEN];
-   int  content_crc;
-   int  port;
+   char subsystem_name[NETPLAY_HOST_LONGSTR_LEN];
 };
 
 struct netplay_host_list
@@ -64,31 +56,37 @@ enum netplay_host_method
 
 struct netplay_room
 {
+   struct netplay_room *next;
    int id;
-   char nickname    [PATH_MAX_LENGTH];
-   char address     [PATH_MAX_LENGTH];
-   char mitm_address[PATH_MAX_LENGTH];
    int  port;
    int  mitm_port;
-   char corename    [PATH_MAX_LENGTH];
-   char frontend    [PATH_MAX_LENGTH];
-   char coreversion [PATH_MAX_LENGTH];
-   char gamename    [PATH_MAX_LENGTH];
    int  gamecrc;
    int  timestamp;
    int  host_method;
+   char country           [3];
+   char retroarch_version [33];
+   char nickname          [33];
+   char subsystem_name    [256];
+   char corename          [256];
+   char frontend          [256];
+   char coreversion       [256];
+   char gamename          [256];
+   char address           [256];
+   char mitm_address      [256];
    bool has_password;
    bool has_spectate_password;
    bool lan;
    bool fixed;
-   char retroarch_version[PATH_MAX_LENGTH];
-   char country[PATH_MAX_LENGTH];
-   struct netplay_room *next;
 };
 
-extern struct netplay_room *netplay_room_list;
-
-extern int netplay_room_count;
+#ifdef HAVE_NETPLAYDISCOVERY
+enum rarch_netplay_discovery_ctl_state
+{
+    RARCH_NETPLAY_DISCOVERY_CTL_NONE = 0,
+    RARCH_NETPLAY_DISCOVERY_CTL_LAN_SEND_QUERY,
+    RARCH_NETPLAY_DISCOVERY_CTL_LAN_GET_RESPONSES,
+    RARCH_NETPLAY_DISCOVERY_CTL_LAN_CLEAR_RESPONSES
+};
 
 /** Initialize Netplay discovery */
 bool init_netplay_discovery(void);
@@ -98,6 +96,11 @@ void deinit_netplay_discovery(void);
 
 /** Discovery control */
 bool netplay_discovery_driver_ctl(enum rarch_netplay_discovery_ctl_state state, void *data);
+#endif
+
+/* TODO/FIXME - globals */
+extern struct netplay_room *netplay_room_list;
+extern int netplay_room_count;
 
 struct netplay_room* netplay_get_host_room(void);
 

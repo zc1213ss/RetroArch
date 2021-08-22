@@ -1,7 +1,7 @@
 /*  RetroArch - A frontend for libretro.
  *  Copyright (C) 2011-2017 - Daniel De Matteis
  *  Copyright (C) 2014-2017 - Jean-André Santoni
- *  Copyright (C) 2016-2017 - Brad Parker
+ *  Copyright (C) 2016-2019 - Brad Parker
  *  Copyright (C) 2018      - Alfredo Monclús
  *  Copyright (C) 2018      - natinusala
  *
@@ -21,28 +21,22 @@
 #define _OZONE_TEXTURE_H
 
 #include "ozone.h"
-#include "ozone_texture.h"
 
 #include "../../menu_driver.h"
 
-enum OZONE_TEXTURE {
+enum OZONE_TEXTURE
+{
    OZONE_TEXTURE_RETROARCH = 0,
    OZONE_TEXTURE_CURSOR_BORDER,
-#ifdef HAVE_DISCORD
+#if 0
    OZONE_TEXTURE_DISCORD_OWN_AVATAR,
 #endif
    OZONE_TEXTURE_LAST
 };
 
-static char *OZONE_TEXTURES_FILES[OZONE_TEXTURE_LAST] = {
-   "retroarch",
-   "cursor_border"
-};
-
-enum OZONE_THEME_TEXTURES {
-   OZONE_THEME_TEXTURE_BUTTON_A = 0,
-   OZONE_THEME_TEXTURE_BUTTON_B,
-   OZONE_THEME_TEXTURE_SWITCH,
+enum OZONE_THEME_TEXTURES
+{
+   OZONE_THEME_TEXTURE_SWITCH = 0,
    OZONE_THEME_TEXTURE_CHECK,
 
    OZONE_THEME_TEXTURE_CURSOR_NO_BORDER,
@@ -51,16 +45,8 @@ enum OZONE_THEME_TEXTURES {
    OZONE_THEME_TEXTURE_LAST
 };
 
-static char *OZONE_THEME_TEXTURES_FILES[OZONE_THEME_TEXTURE_LAST] = {
-   "button_a",
-   "button_b",
-   "switch",
-   "check",
-   "cursor_noborder",
-   "cursor_static"
-};
-
-enum OZONE_TAB_TEXTURES {
+enum OZONE_TAB_TEXTURES
+{
    OZONE_TAB_TEXTURE_MAIN_MENU = 0,
    OZONE_TAB_TEXTURE_SETTINGS,
    OZONE_TAB_TEXTURE_HISTORY,
@@ -72,18 +58,6 @@ enum OZONE_TAB_TEXTURES {
    OZONE_TAB_TEXTURE_SCAN_CONTENT,
 
    OZONE_TAB_TEXTURE_LAST
-};
-
-static char *OZONE_TAB_TEXTURES_FILES[OZONE_TAB_TEXTURE_LAST] = {
-   "retroarch",
-   "settings",
-   "history",
-   "favorites",
-   "music",
-   "video",
-   "image",
-   "netplay",
-   "add"
 };
 
 enum
@@ -115,6 +89,7 @@ enum
    OZONE_ENTRIES_ICONS_TEXTURE_LOADSTATE,
    OZONE_ENTRIES_ICONS_TEXTURE_UNDO,
    OZONE_ENTRIES_ICONS_TEXTURE_CORE_INFO,
+   OZONE_ENTRIES_ICONS_TEXTURE_BLUETOOTH,
    OZONE_ENTRIES_ICONS_TEXTURE_WIFI,
    OZONE_ENTRIES_ICONS_TEXTURE_CORE_OPTIONS,
    OZONE_ENTRIES_ICONS_TEXTURE_INPUT_REMAPPING_OPTIONS,
@@ -141,8 +116,13 @@ enum
    OZONE_ENTRIES_ICONS_TEXTURE_CLOCK,
    OZONE_ENTRIES_ICONS_TEXTURE_BATTERY_FULL,
    OZONE_ENTRIES_ICONS_TEXTURE_BATTERY_CHARGING,
+   OZONE_ENTRIES_ICONS_TEXTURE_BATTERY_80,
+   OZONE_ENTRIES_ICONS_TEXTURE_BATTERY_60,
+   OZONE_ENTRIES_ICONS_TEXTURE_BATTERY_40,
+   OZONE_ENTRIES_ICONS_TEXTURE_BATTERY_20,
    OZONE_ENTRIES_ICONS_TEXTURE_POINTER,
    OZONE_ENTRIES_ICONS_TEXTURE_ADD,
+   OZONE_ENTRIES_ICONS_TEXTURE_DISC,
    OZONE_ENTRIES_ICONS_TEXTURE_KEY,
    OZONE_ENTRIES_ICONS_TEXTURE_KEY_HOVER,
    OZONE_ENTRIES_ICONS_TEXTURE_DIALOG_SLICE,
@@ -210,7 +190,7 @@ enum
 
 const char *ozone_entries_icon_texture_path(unsigned id);
 
-menu_texture_item ozone_entries_icon_get_texture(ozone_handle_t *ozone,
+uintptr_t ozone_entries_icon_get_texture(ozone_handle_t *ozone,
       enum msg_hash_enums enum_idx, unsigned type, bool active);
 
 bool ozone_reset_theme_textures(ozone_handle_t *ozone);

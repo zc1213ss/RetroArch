@@ -26,12 +26,18 @@ extern char uwp_dir_install[PATH_MAX_LENGTH];
 extern char uwp_dir_data[PATH_MAX_LENGTH];
 extern char uwp_device_family[128];
 
+void uwp_open_broadfilesystemaccess_settings(void);
+bool uwp_drive_exists(const char *path);
+char* uwp_trigger_picker(void);
+
 void* uwp_get_corewindow(void);
 
-void uwp_input_next_frame(void);
+void uwp_input_next_frame(void *data);
 bool uwp_keyboard_pressed(unsigned key);
 int16_t uwp_mouse_state(unsigned port, unsigned id, bool screen);
 int16_t uwp_pointer_state(unsigned idx, unsigned id, bool screen);
+const char* uwp_get_cpu_model_name(void);
+enum retro_language uwp_get_language(void);
 
 void uwp_fill_installed_core_packages(struct string_list *list);
 

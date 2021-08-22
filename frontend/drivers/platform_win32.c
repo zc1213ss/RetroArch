@@ -1,6 +1,7 @@
 /* RetroArch - A frontend for libretro.
  * Copyright (C) 2011-2017 - Daniel De Matteis
- * Copyright (C) 2016-2017 - Brad Parker
+ * Copyright (C) 2016-2019 - Brad Parker
+ * Copyright (C) 2018-2019 - Andrés Suárez
  *
  * RetroArch is free software: you can redistribute it and/or modify it under the terms
  * of the GNU General Public License as published by the Free Software Found-
@@ -20,6 +21,10 @@
 
 #include <retro_miscellaneous.h>
 #include <windows.h>
+#if defined(_WIN32) && !defined(_XBOX)
+#include <process.h>
+#include <errno.h>
+#endif
 
 #include <boolean.h>
 #include <compat/strl.h>
@@ -27,6 +32,8 @@
 #include <lists/file_list.h>
 #include <file/file_path.h>
 #include <string/stdstring.h>
+#include <encodings/utf.h>
+#include <features/features_cpu.h>
 
 #ifdef HAVE_CONFIG_H
 #include "../../config.h"
@@ -39,29 +46,148 @@
 #include "../frontend_driver.h"
 #include "../../configuration.h"
 #include "../../defaults.h"
-#include "../../retroarch.h"
 #include "../../verbosity.h"
 #include "../../ui/drivers/ui_win32.h"
+#include "../../paths.h"
+#include "../../msg_hash.h"
+#include "platform_win32.h"
+
+#include "../../verbosity.h"
+
+/*
+#ifdef HAVE_NVDA
+#include "../../nvda_controller.h"
+#endif
+*/
+
+#ifdef HAVE_SAPI
+#define COBJMACROS
+#include <sapi.h>
+#include <ole2.h>
+#endif
+
+#ifdef HAVE_SAPI
+static ISpVoice* pVoice        = NULL;
+#endif
+#ifdef HAVE_NVDA
+static bool USE_POWERSHELL     = false;
+static bool USE_NVDA           = true;
+#else
+static bool USE_POWERSHELL     = true;
+static bool USE_NVDA           = false;
+#endif
+static bool USE_NVDA_BRAILLE   = false;
 
 #ifndef SM_SERVERR2
 #define SM_SERVERR2 89
 #endif
 
+/* static public global variable */
+VOID (WINAPI *DragAcceptFiles_func)(HWND, BOOL);
+
+/* TODO/FIXME - static global variables */
+static bool dwm_composition_disabled = false;
+static bool console_needs_free       = false;
+static char win32_cpu_model_name[64] = {0};
+static bool pi_set                   = false;
+#ifdef HAVE_DYNAMIC
 /* We only load this library once, so we let it be
  * unloaded at application shutdown, since unloading
  * it early seems to cause issues on some systems.
  */
-
-#ifdef HAVE_DYNAMIC
 static dylib_t dwmlib;
 static dylib_t shell32lib;
+static dylib_t nvdalib;
 #endif
 
-VOID (WINAPI *DragAcceptFiles_func)(HWND, BOOL);
+/* Dynamic loading for Non-Visual Desktop Access support */
+unsigned long (__stdcall *nvdaController_testIfRunning_func)(void);
+unsigned long (__stdcall *nvdaController_cancelSpeech_func)(void);
+unsigned long (__stdcall *nvdaController_brailleMessage_func)(wchar_t*);
+unsigned long (__stdcall *nvdaController_speakText_func)(wchar_t*);
 
-static bool dwm_composition_disabled;
+#if defined(HAVE_LANGEXTRA) && !defined(_XBOX)
+#if (defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0500) || !defined(_MSC_VER)
+struct win32_lang_pair
+{
+   unsigned short lang_ident;
+   enum retro_language lang;
+};
 
-static bool console_needs_free;
+/* https://docs.microsoft.com/en-us/windows/desktop/Intl/language-identifier-constants-and-strings */
+const struct win32_lang_pair win32_lang_pairs[] =
+{
+   /* array order MUST be kept, always largest ID first */
+   {0x7c04, RETRO_LANGUAGE_CHINESE_TRADITIONAL}, /* neutral */
+   {0x1404, RETRO_LANGUAGE_CHINESE_TRADITIONAL}, /* MO */
+   {0x1004, RETRO_LANGUAGE_CHINESE_SIMPLIFIED}, /* SG */
+   {0xC04, RETRO_LANGUAGE_CHINESE_TRADITIONAL}, /* HK/PRC */
+   {0x816, RETRO_LANGUAGE_PORTUGUESE_PORTUGAL},
+   {0x416, RETRO_LANGUAGE_PORTUGUESE_BRAZIL},
+   {0x2a, RETRO_LANGUAGE_VIETNAMESE},
+   {0x19, RETRO_LANGUAGE_RUSSIAN},
+   {0x16, RETRO_LANGUAGE_PORTUGUESE_PORTUGAL},
+   {0x15, RETRO_LANGUAGE_POLISH},
+   {0x13, RETRO_LANGUAGE_DUTCH},
+   {0x12, RETRO_LANGUAGE_KOREAN},
+   {0x11, RETRO_LANGUAGE_JAPANESE},
+   {0x10, RETRO_LANGUAGE_ITALIAN},
+   {0xc, RETRO_LANGUAGE_FRENCH},
+   {0xa, RETRO_LANGUAGE_SPANISH},
+   {0x9, RETRO_LANGUAGE_ENGLISH},
+   {0x8, RETRO_LANGUAGE_GREEK},
+   {0x7, RETRO_LANGUAGE_GERMAN},
+   {0x4, RETRO_LANGUAGE_CHINESE_SIMPLIFIED}, /* neutral */
+   {0x1, RETRO_LANGUAGE_ARABIC},
+   /* MS does not support Esperanto */
+   /*{0x0, RETRO_LANGUAGE_ESPERANTO},*/
+};
+
+unsigned short win32_get_langid_from_retro_lang(enum retro_language lang)
+{
+   unsigned i;
+
+   for (i = 0; i < sizeof(win32_lang_pairs) / sizeof(win32_lang_pairs[0]); i++)
+   {
+      if (win32_lang_pairs[i].lang == lang)
+         return win32_lang_pairs[i].lang_ident;
+   }
+
+   return 0x409; /* fallback to US English */
+}
+
+enum retro_language win32_get_retro_lang_from_langid(unsigned short langid)
+{
+   unsigned i;
+
+   for (i = 0; i < sizeof(win32_lang_pairs) / sizeof(win32_lang_pairs[0]); i++)
+   {
+      if (win32_lang_pairs[i].lang_ident > 0x3ff)
+      {
+         if (langid == win32_lang_pairs[i].lang_ident)
+            return win32_lang_pairs[i].lang;
+      }
+      else
+      {
+         if ((langid & 0x3ff) == win32_lang_pairs[i].lang_ident)
+            return win32_lang_pairs[i].lang;
+      }
+   }
+
+   return RETRO_LANGUAGE_ENGLISH;
+}
+#endif
+#else
+unsigned short win32_get_langid_from_retro_lang(enum retro_language lang)
+{
+   return 0x409; /* fallback to US English */
+}
+
+enum retro_language win32_get_retro_lang_from_langid(unsigned short langid)
+{
+   return RETRO_LANGUAGE_ENGLISH;
+}
+#endif
 
 static void gfx_dwm_shutdown(void)
 {
@@ -101,9 +227,9 @@ static bool gfx_init_dwm(void)
 
    DragAcceptFiles_func =
       (VOID (WINAPI*)(HWND, BOOL))dylib_proc(shell32lib, "DragAcceptFiles");
-   
+
    mmcss =
-	   (HRESULT(WINAPI*)(BOOL))dylib_proc(dwmlib, "DwmEnableMMCSS");
+      (HRESULT(WINAPI*)(BOOL))dylib_proc(dwmlib, "DwmEnableMMCSS");
 #else
    DragAcceptFiles_func = DragAcceptFiles;
 #if 0
@@ -112,10 +238,7 @@ static bool gfx_init_dwm(void)
 #endif
 
    if (mmcss)
-   {
-	   RARCH_LOG("Setting multimedia scheduling for DWM.\n");
-	   mmcss(TRUE);
-   }
+      mmcss(TRUE);
 
    inited = true;
    return true;
@@ -125,12 +248,13 @@ static void gfx_set_dwm(void)
 {
    HRESULT ret;
    HRESULT (WINAPI *composition_enable)(UINT);
-   settings_t *settings = config_get_ptr();
+   settings_t *settings     = config_get_ptr();
+   bool disable_composition = settings->bools.video_disable_composition;
 
    if (!gfx_init_dwm())
       return;
 
-   if (settings->bools.video_disable_composition == dwm_composition_disabled)
+   if (disable_composition == dwm_composition_disabled)
       return;
 
 #ifdef HAVE_DYNAMIC
@@ -144,10 +268,10 @@ static void gfx_set_dwm(void)
       return;
    }
 
-   ret = composition_enable(!settings->bools.video_disable_composition);
+   ret = composition_enable(!disable_composition);
    if (FAILED(ret))
       RARCH_ERR("Failed to set composition state ...\n");
-   dwm_composition_disabled = settings->bools.video_disable_composition;
+   dwm_composition_disabled = disable_composition;
 }
 
 static void frontend_win32_get_os(char *s, size_t len, int *major, int *minor)
@@ -206,36 +330,36 @@ static void frontend_win32_get_os(char *s, size_t len, int *major, int *minor)
    {
       case 10:
          if (server)
-            strlcpy(s, "Windows Server 2016", len);
+            strcpy_literal(s, "Windows Server 2016");
          else
-            strlcpy(s, "Windows 10", len);
+            strcpy_literal(s, "Windows 10");
          break;
       case 6:
          switch (vi.dwMinorVersion)
          {
             case 3:
                if (server)
-                  strlcpy(s, "Windows Server 2012 R2", len);
+                  strcpy_literal(s, "Windows Server 2012 R2");
                else
-                  strlcpy(s, "Windows 8.1", len);
+                  strcpy_literal(s, "Windows 8.1");
                break;
             case 2:
                if (server)
-                  strlcpy(s, "Windows Server 2012", len);
+                  strcpy_literal(s, "Windows Server 2012");
                else
-                  strlcpy(s, "Windows 8", len);
+                  strcpy_literal(s, "Windows 8");
                break;
             case 1:
                if (server)
-                  strlcpy(s, "Windows Server 2008 R2", len);
+                  strcpy_literal(s, "Windows Server 2008 R2");
                else
-                  strlcpy(s, "Windows 7", len);
+                  strcpy_literal(s, "Windows 7");
                break;
             case 0:
                if (server)
-                  strlcpy(s, "Windows Server 2008", len);
+                  strcpy_literal(s, "Windows Server 2008");
                else
-                  strlcpy(s, "Windows Vista", len);
+                  strcpy_literal(s, "Windows Vista");
                break;
             default:
                break;
@@ -247,7 +371,7 @@ static void frontend_win32_get_os(char *s, size_t len, int *major, int *minor)
             case 2:
                if (server)
                {
-                  strlcpy(s, "Windows Server 2003", len);
+                  strcpy_literal(s, "Windows Server 2003");
                   if (GetSystemMetrics(SM_SERVERR2))
                      strlcat(s, " R2", len);
                }
@@ -255,14 +379,14 @@ static void frontend_win32_get_os(char *s, size_t len, int *major, int *minor)
                {
                   /* Yes, XP Pro x64 is a higher version number than XP x86 */
                   if (string_is_equal(arch, "x64"))
-                     strlcpy(s, "Windows XP", len);
+                     strcpy_literal(s, "Windows XP");
                }
                break;
             case 1:
-               strlcpy(s, "Windows XP", len);
+               strcpy_literal(s, "Windows XP");
                break;
             case 0:
-               strlcpy(s, "Windows 2000", len);
+               strcpy_literal(s, "Windows 2000");
                break;
          }
          break;
@@ -271,17 +395,17 @@ static void frontend_win32_get_os(char *s, size_t len, int *major, int *minor)
          {
             case 0:
                if (vi.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)
-                  strlcpy(s, "Windows 95", len);
+                  strcpy_literal(s, "Windows 95");
                else if (vi.dwPlatformId == VER_PLATFORM_WIN32_NT)
-                  strlcpy(s, "Windows NT 4.0", len);
+                  strcpy_literal(s, "Windows NT 4.0");
                else
-                  strlcpy(s, "Unknown", len);
+                  strcpy_literal(s, "Unknown");
                break;
             case 90:
-               strlcpy(s, "Windows ME", len);
+               strcpy_literal(s, "Windows ME");
                break;
             case 10:
-               strlcpy(s, "Windows 98", len);
+               strcpy_literal(s, "Windows 98");
                break;
          }
          break;
@@ -309,56 +433,86 @@ static void frontend_win32_get_os(char *s, size_t len, int *major, int *minor)
 
 static void frontend_win32_init(void *data)
 {
-	typedef BOOL (WINAPI *isProcessDPIAwareProc)();
-	typedef BOOL (WINAPI *setProcessDPIAwareProc)();
+   typedef BOOL (WINAPI *isProcessDPIAwareProc)();
+   typedef BOOL (WINAPI *setProcessDPIAwareProc)();
 #ifdef HAVE_DYNAMIC
-	HMODULE handle                         =
+   HMODULE handle                         =
       GetModuleHandle("User32.dll");
-	isProcessDPIAwareProc  isDPIAwareProc  =
+   isProcessDPIAwareProc  isDPIAwareProc  =
       (isProcessDPIAwareProc)dylib_proc(handle, "IsProcessDPIAware");
-	setProcessDPIAwareProc setDPIAwareProc =
+   setProcessDPIAwareProc setDPIAwareProc =
       (setProcessDPIAwareProc)dylib_proc(handle, "SetProcessDPIAware");
 #else
-	isProcessDPIAwareProc  isDPIAwareProc  = IsProcessDPIAware;
-	setProcessDPIAwareProc setDPIAwareProc = SetProcessDPIAware;
+   isProcessDPIAwareProc  isDPIAwareProc  = IsProcessDPIAware;
+   setProcessDPIAwareProc setDPIAwareProc = SetProcessDPIAware;
 #endif
 
-	if (isDPIAwareProc)
-		if (!isDPIAwareProc())
-			if (setDPIAwareProc)
-				setDPIAwareProc();
+   if (isDPIAwareProc)
+      if (!isDPIAwareProc())
+         if (setDPIAwareProc)
+            setDPIAwareProc();
 }
+
+
+#ifdef HAVE_NVDA
+static void init_nvda(void)
+{
+#ifdef HAVE_DYNAMIC
+   if (USE_NVDA && !nvdalib)
+   {
+      nvdalib = dylib_load("nvdaControllerClient64.dll");
+      if (!nvdalib)
+      {
+         USE_NVDA = false;
+         USE_POWERSHELL = true;
+      }
+      else
+      {
+         nvdaController_testIfRunning_func = ( unsigned long (__stdcall*)(void))dylib_proc(nvdalib, "nvdaController_testIfRunning");
+         nvdaController_cancelSpeech_func = (unsigned long(__stdcall *)(void))dylib_proc(nvdalib, "nvdaController_cancelSpeech");
+         nvdaController_brailleMessage_func = (unsigned long(__stdcall *)(wchar_t*))dylib_proc(nvdalib, "nvdaController_brailleMessage");
+         nvdaController_speakText_func = (unsigned long(__stdcall *)(wchar_t*))dylib_proc(nvdalib, "nvdaController_speakText");
+      
+      }
+   }
+#else
+   USE_NVDA = false;
+   USE_POWERSHELL = true;
+#endif
+}
+#endif
 
 enum frontend_powerstate frontend_win32_get_powerstate(int *seconds, int *percent)
 {
    SYSTEM_POWER_STATUS status;
-	enum frontend_powerstate ret = FRONTEND_POWERSTATE_NONE;
+   enum frontend_powerstate ret = FRONTEND_POWERSTATE_NONE;
 
-	if (!GetSystemPowerStatus(&status))
-		return ret;
+   if (!GetSystemPowerStatus(&status))
+      return ret;
 
-	if (status.BatteryFlag == 0xFF)
-		ret = FRONTEND_POWERSTATE_NONE;
-	if (status.BatteryFlag & (1 << 7))
-		ret = FRONTEND_POWERSTATE_NO_SOURCE;
-	else if (status.BatteryFlag & (1 << 3))
-		ret = FRONTEND_POWERSTATE_CHARGING;
-	else if (status.ACLineStatus == 1)
-		ret = FRONTEND_POWERSTATE_CHARGED;
-	else
-		ret = FRONTEND_POWERSTATE_ON_POWER_SOURCE;
+   if (status.BatteryFlag == 0xFF)
+      ret = FRONTEND_POWERSTATE_NONE;
+   else if (status.BatteryFlag & (1 << 7))
+      ret = FRONTEND_POWERSTATE_NO_SOURCE;
+   else if (status.BatteryFlag & (1 << 3))
+      ret = FRONTEND_POWERSTATE_CHARGING;
+   else if (status.ACLineStatus == 1)
+      ret = FRONTEND_POWERSTATE_CHARGED;
+   else
+      ret = FRONTEND_POWERSTATE_ON_POWER_SOURCE;
 
-	*percent  = (int)status.BatteryLifePercent;
-	*seconds  = (int)status.BatteryLifeTime;
+   *percent  = (int)status.BatteryLifePercent;
+   *seconds  = (int)status.BatteryLifeTime;
 
 #ifdef _WIN32
-      if (*percent == 255)
-         *percent = 0;
+   if (*percent == 255)
+      *percent = 0;
 #endif
-	return ret;
+
+   return ret;
 }
 
-enum frontend_architecture frontend_win32_get_architecture(void)
+enum frontend_architecture frontend_win32_get_arch(void)
 {
 #if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0500
    /* Windows 2000 and later */
@@ -391,7 +545,7 @@ static int frontend_win32_parse_drive_list(void *data, bool load_content)
    file_list_t *list = (file_list_t*)data;
    enum msg_hash_enums enum_idx = load_content ?
          MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR :
-         MSG_UNKNOWN;
+         MENU_ENUM_LABEL_FILE_BROWSER_DIRECTORY;
    size_t i          = 0;
    unsigned drives   = GetLogicalDrives();
    char    drive[]   = " :\\";
@@ -411,9 +565,14 @@ static int frontend_win32_parse_drive_list(void *data, bool load_content)
    return 0;
 }
 
-static void frontend_win32_environment_get(int *argc, char *argv[],
+static void frontend_win32_env_get(int *argc, char *argv[],
       void *args, void *params_data)
 {
+   const char *tmp_dir = getenv("TMP");
+   if (!string_is_empty(tmp_dir))
+      fill_pathname_expand_special(g_defaults.dirs[DEFAULT_DIR_CACHE],
+         tmp_dir, sizeof(g_defaults.dirs[DEFAULT_DIR_CACHE]));
+
    gfx_set_dwm();
 
    fill_pathname_expand_special(g_defaults.dirs[DEFAULT_DIR_ASSETS],
@@ -444,6 +603,10 @@ static void frontend_win32_environment_get(int *argc, char *argv[],
       ":\\thumbnails", sizeof(g_defaults.dirs[DEFAULT_DIR_THUMBNAILS]));
    fill_pathname_expand_special(g_defaults.dirs[DEFAULT_DIR_OVERLAY],
       ":\\overlays", sizeof(g_defaults.dirs[DEFAULT_DIR_OVERLAY]));
+#ifdef HAVE_VIDEO_LAYOUT
+   fill_pathname_expand_special(g_defaults.dirs[DEFAULT_DIR_VIDEO_LAYOUT],
+      ":\\layouts", sizeof(g_defaults.dirs[DEFAULT_DIR_VIDEO_LAYOUT]));
+#endif
    fill_pathname_expand_special(g_defaults.dirs[DEFAULT_DIR_CORE],
       ":\\cores", sizeof(g_defaults.dirs[DEFAULT_DIR_CORE]));
    fill_pathname_expand_special(g_defaults.dirs[DEFAULT_DIR_CORE_INFO],
@@ -462,46 +625,45 @@ static void frontend_win32_environment_get(int *argc, char *argv[],
       ":\\states", sizeof(g_defaults.dirs[DEFAULT_DIR_SAVESTATE]));
    fill_pathname_expand_special(g_defaults.dirs[DEFAULT_DIR_SYSTEM],
       ":\\system", sizeof(g_defaults.dirs[DEFAULT_DIR_SYSTEM]));
+   fill_pathname_expand_special(g_defaults.dirs[DEFAULT_DIR_LOGS],
+      ":\\logs", sizeof(g_defaults.dirs[DEFAULT_DIR_LOGS]));
 
-#ifdef HAVE_MENU
-#if defined(HAVE_OPENGL) || defined(HAVE_OPENGLES)
-   snprintf(g_defaults.settings.menu,
-         sizeof(g_defaults.settings.menu), "xmb");
-#endif
+#ifndef IS_SALAMANDER
+   dir_check_defaults("custom.ini");
 #endif
 }
 
-static uint64_t frontend_win32_get_mem_total(void)
+static uint64_t frontend_win32_get_total_mem(void)
 {
    /* OSes below 2000 don't have the Ex version,
     * and non-Ex cannot work with >4GB RAM */
 #if _WIN32_WINNT >= 0x0500
-	MEMORYSTATUSEX mem_info;
-	mem_info.dwLength = sizeof(MEMORYSTATUSEX);
-	GlobalMemoryStatusEx(&mem_info);
-	return mem_info.ullTotalPhys;
+   MEMORYSTATUSEX mem_info;
+   mem_info.dwLength = sizeof(MEMORYSTATUSEX);
+   GlobalMemoryStatusEx(&mem_info);
+   return mem_info.ullTotalPhys;
 #else
-	MEMORYSTATUS mem_info;
-	mem_info.dwLength = sizeof(MEMORYSTATUS);
-	GlobalMemoryStatus(&mem_info);
-	return mem_info.dwTotalPhys;
+   MEMORYSTATUS mem_info;
+   mem_info.dwLength = sizeof(MEMORYSTATUS);
+   GlobalMemoryStatus(&mem_info);
+   return mem_info.dwTotalPhys;
 #endif
 }
 
-static uint64_t frontend_win32_get_mem_used(void)
+static uint64_t frontend_win32_get_free_mem(void)
 {
    /* OSes below 2000 don't have the Ex version,
     * and non-Ex cannot work with >4GB RAM */
 #if _WIN32_WINNT >= 0x0500
-	MEMORYSTATUSEX mem_info;
-	mem_info.dwLength = sizeof(MEMORYSTATUSEX);
-	GlobalMemoryStatusEx(&mem_info);
-	return ((frontend_win32_get_mem_total() - mem_info.ullAvailPhys));
+   MEMORYSTATUSEX mem_info;
+   mem_info.dwLength = sizeof(MEMORYSTATUSEX);
+   GlobalMemoryStatusEx(&mem_info);
+   return mem_info.ullAvailPhys;
 #else
-	MEMORYSTATUS mem_info;
-	mem_info.dwLength = sizeof(MEMORYSTATUS);
-	GlobalMemoryStatus(&mem_info);
-	return ((frontend_win32_get_mem_total() - mem_info.dwAvailPhys));
+   MEMORYSTATUS mem_info;
+   mem_info.dwLength = sizeof(MEMORYSTATUS);
+   GlobalMemoryStatus(&mem_info);
+   return mem_info.dwAvailPhys;
 #endif
 }
 
@@ -530,13 +692,17 @@ static void frontend_win32_attach_console(void)
    bool need_stderr = (GetFileType(GetStdHandle(STD_ERROR_HANDLE))
          == FILE_TYPE_UNKNOWN);
 
-   if(need_stdout || need_stderr)
+   if (need_stdout || need_stderr)
    {
-      if(!AttachConsole( ATTACH_PARENT_PROCESS))
+      if (!AttachConsole( ATTACH_PARENT_PROCESS))
          AllocConsole();
 
-      if(need_stdout) freopen( "CONOUT$", "w", stdout );
-      if(need_stderr) freopen( "CONOUT$", "w", stderr );
+      SetConsoleTitle("Log Console");
+
+      if (need_stdout)
+         freopen( "CONOUT$", "w", stdout );
+      if (need_stderr)
+         freopen( "CONOUT$", "w", stderr );
 
       console_needs_free = true;
    }
@@ -549,7 +715,7 @@ static void frontend_win32_detach_console(void)
 {
 #if defined(_WIN32) && !defined(_XBOX)
 #ifdef _WIN32_WINNT_WINXP
-   if(console_needs_free)
+   if (console_needs_free)
    {
       /* we don't reconnect stdout/stderr to anything here,
        * because by definition, they weren't connected to
@@ -561,32 +727,447 @@ static void frontend_win32_detach_console(void)
 #endif
 }
 
+static const char* frontend_win32_get_cpu_model_name(void)
+{
+#ifdef ANDROID
+   return NULL;
+#else
+   cpu_features_get_model_name(win32_cpu_model_name, sizeof(win32_cpu_model_name));
+   return win32_cpu_model_name;
+#endif
+}
+
+enum retro_language frontend_win32_get_user_language(void)
+{
+   enum retro_language lang = RETRO_LANGUAGE_ENGLISH;
+#if defined(HAVE_LANGEXTRA) && !defined(_XBOX)
+#if (defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0500) || !defined(_MSC_VER)
+   LANGID langid = GetUserDefaultUILanguage();
+   lang = win32_get_retro_lang_from_langid(langid);
+#endif
+#endif
+   return lang;
+}
+
+#if defined(_WIN32) && !defined(_XBOX)
+enum frontend_fork win32_fork_mode;
+
+static void frontend_win32_respawn(char *s, size_t len, char *args)
+{
+   STARTUPINFO si;
+   PROCESS_INFORMATION pi;
+   char executable_path[PATH_MAX_LENGTH] = {0};
+
+   if (win32_fork_mode != FRONTEND_FORK_RESTART)
+      return;
+
+   fill_pathname_application_path(executable_path,
+         sizeof(executable_path));
+   path_set(RARCH_PATH_CORE, executable_path);
+   RARCH_LOG("Restarting RetroArch with commandline: %s and %s\n",
+      executable_path, args);
+
+   memset(&si, 0, sizeof(si));
+   si.cb = sizeof(si);
+   memset(&pi, 0, sizeof(pi));
+
+   if (!CreateProcess( executable_path, args,
+      NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+   {
+      RARCH_LOG("Failed to restart RetroArch\n");
+   }
+}
+
+static bool frontend_win32_set_fork(enum frontend_fork fork_mode)
+{
+   switch (fork_mode)
+   {
+      case FRONTEND_FORK_CORE:
+         break;
+      case FRONTEND_FORK_CORE_WITH_ARGS:
+         break;
+      case FRONTEND_FORK_RESTART:
+         command_event(CMD_EVENT_QUIT, NULL);
+         break;
+      case FRONTEND_FORK_NONE:
+      default:
+         break;
+   }
+   win32_fork_mode = fork_mode;
+   return true;
+}
+#endif
+
+#if defined(_WIN32) && !defined(_XBOX)
+static const char *accessibility_win_language_id(const char* language)
+{
+   if (string_is_equal(language,"en"))
+      return "409";
+   else if (string_is_equal(language,"it"))
+      return "410";
+   else if (string_is_equal(language,"sv"))
+      return "041d";
+   else if (string_is_equal(language,"fr"))
+      return "040c";
+   else if (string_is_equal(language,"de"))
+      return "407";
+   else if (string_is_equal(language,"he"))
+      return "040d";
+   else if (string_is_equal(language,"id"))
+      return "421";
+   else if (string_is_equal(language,"es"))
+      return "040a";
+   else if (string_is_equal(language,"nl"))
+      return "413";
+   else if (string_is_equal(language,"ro"))
+      return "418";
+   else if (string_is_equal(language,"pt_pt"))
+      return "816";
+   else if (string_is_equal(language,"pt_bt") || string_is_equal(language,"pt"))
+      return "416";
+   else if (string_is_equal(language,"th"))
+      return "041e";
+   else if (string_is_equal(language,"ja"))
+      return "411";
+   else if (string_is_equal(language,"sk"))
+      return "041b";
+   else if (string_is_equal(language,"hi"))
+      return "439";
+   else if (string_is_equal(language,"ar"))
+      return "401";
+   else if (string_is_equal(language,"hu"))
+      return "040e";
+   else if (string_is_equal(language,"zh_tw") || string_is_equal(language,"zh"))
+      return "804";
+   else if (string_is_equal(language,"el"))
+      return "408";
+   else if (string_is_equal(language,"ru"))
+      return "419";
+   else if (string_is_equal(language,"nb"))
+      return "414";
+   else if (string_is_equal(language,"da"))
+      return "406";
+   else if (string_is_equal(language,"fi"))
+      return "040b";
+   else if (string_is_equal(language,"zh_hk"))
+      return "0c04";
+   else if (string_is_equal(language,"zh_cn"))
+      return "804";
+   else if (string_is_equal(language,"tr"))
+      return "041f";
+   else if (string_is_equal(language,"ko"))
+      return "412";
+   else if (string_is_equal(language,"pl"))
+      return "415";
+   else if (string_is_equal(language,"cs")) 
+      return "405";
+   else
+      return "";
+
+
+}
+
+static const char *accessibility_win_language_code(const char* language)
+{
+   if (string_is_equal(language,"en"))
+      return "Microsoft David Desktop";
+   else if (string_is_equal(language,"it"))
+      return "Microsoft Cosimo Desktop";
+   else if (string_is_equal(language,"sv"))
+      return "Microsoft Bengt Desktop";
+   else if (string_is_equal(language,"fr"))
+      return "Microsoft Paul Desktop";
+   else if (string_is_equal(language,"de"))
+      return "Microsoft Stefan Desktop";
+   else if (string_is_equal(language,"he"))
+      return "Microsoft Asaf Desktop";
+   else if (string_is_equal(language,"id"))
+      return "Microsoft Andika Desktop";
+   else if (string_is_equal(language,"es"))
+      return "Microsoft Pablo Desktop";
+   else if (string_is_equal(language,"nl"))
+      return "Microsoft Frank Desktop";
+   else if (string_is_equal(language,"ro"))
+      return "Microsoft Andrei Desktop";
+   else if (string_is_equal(language,"pt_pt"))
+      return "Microsoft Helia Desktop";
+   else if (string_is_equal(language,"pt_bt") || string_is_equal(language,"pt"))
+      return "Microsoft Daniel Desktop";
+   else if (string_is_equal(language,"th"))
+      return "Microsoft Pattara Desktop";
+   else if (string_is_equal(language,"ja"))
+      return "Microsoft Ichiro Desktop";
+   else if (string_is_equal(language,"sk"))
+      return "Microsoft Filip Desktop";
+   else if (string_is_equal(language,"hi"))
+      return "Microsoft Hemant Desktop";
+   else if (string_is_equal(language,"ar"))
+      return "Microsoft Naayf Desktop";
+   else if (string_is_equal(language,"hu"))
+      return "Microsoft Szabolcs Desktop";
+   else if (string_is_equal(language,"zh_tw") || string_is_equal(language,"zh"))
+      return "Microsoft Zhiwei Desktop";
+   else if (string_is_equal(language,"el"))
+      return "Microsoft Stefanos Desktop";
+   else if (string_is_equal(language,"ru"))
+      return "Microsoft Pavel Desktop";
+   else if (string_is_equal(language,"nb"))
+      return "Microsoft Jon Desktop";
+   else if (string_is_equal(language,"da"))
+      return "Microsoft Helle Desktop";
+   else if (string_is_equal(language,"fi"))
+      return "Microsoft Heidi Desktop";
+   else if (string_is_equal(language,"zh_hk"))
+      return "Microsoft Danny Desktop";
+   else if (string_is_equal(language,"zh_cn"))
+      return "Microsoft Kangkang Desktop";
+   else if (string_is_equal(language,"tr"))
+      return "Microsoft Tolga Desktop";
+   else if (string_is_equal(language,"ko"))
+      return "Microsoft Heami Desktop";
+   else if (string_is_equal(language,"pl"))
+      return "Microsoft Adam Desktop";
+   else if (string_is_equal(language,"cs")) 
+      return "Microsoft Jakub Desktop";
+   else
+      return "";
+}
+
+static bool terminate_win32_process(PROCESS_INFORMATION pi)
+{
+   TerminateProcess(pi.hProcess,0);
+   CloseHandle(pi.hProcess);
+   CloseHandle(pi.hThread);
+   return true;
+}
+
+static PROCESS_INFORMATION g_pi;
+
+static bool create_win32_process(char* cmd, const char * input)
+{
+   STARTUPINFO si;
+   HANDLE rd = NULL;
+   bool ret;
+   memset(&si, 0, sizeof(si));
+   si.cb = sizeof(si);
+   memset(&g_pi, 0, sizeof(g_pi));
+
+   if (input)
+   {
+      DWORD dummy;
+      HANDLE wr;
+      if (!CreatePipe(&rd, &wr, NULL, strlen(input))) return false;
+      
+      SetHandleInformation(rd, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+      
+      WriteFile(wr, input, strlen(input), &dummy, NULL);
+      CloseHandle(wr);
+      
+      si.dwFlags |= STARTF_USESTDHANDLES;
+      si.hStdInput = rd;
+      si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+      si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+   }
+
+   ret = CreateProcess(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW,
+                      NULL, NULL, &si, &g_pi);
+   if (rd) CloseHandle(rd);
+   return ret;
+}
+
+static bool is_narrator_running_windows(void)
+{
+   DWORD status = 0;
+#ifdef HAVE_NVDA
+   init_nvda();
+#endif
+
+   if (USE_POWERSHELL)
+   {
+      if (pi_set == false)
+         return false;
+      if (GetExitCodeProcess(g_pi.hProcess, &status))
+      {
+         if (status == STILL_ACTIVE)
+            return true;
+      }
+      return false;
+   }
+#ifdef HAVE_NVDA
+   else if (USE_NVDA)
+   {
+      long res;
+      res = nvdaController_testIfRunning_func();
+
+      if (res != 0) 
+      {
+         /* The running nvda service wasn't found, so revert
+            back to the powershell method
+         */
+         RARCH_LOG("Error communicating with NVDA\n");
+         USE_POWERSHELL = true;
+         USE_NVDA       = false;
+	 return false;
+      }
+      return false;
+   }
+#endif
+#ifdef HAVE_SAPI
+   else
+   {
+      SPVOICESTATUS pStatus;
+      if (pVoice)
+      {
+         ISpVoice_GetStatus(pVoice, &pStatus, NULL);
+         if (pStatus.dwRunningState == SPRS_IS_SPEAKING)
+            return true;
+      }
+   }
+#endif
+   return false;
+}
+
+static bool accessibility_speak_windows(int speed,
+      const char* speak_text, int priority)
+{
+   char cmd[512];
+   const char *voice      = get_user_language_iso639_1(true);
+   const char *language   = accessibility_win_language_code(voice);
+   const char *langid     = accessibility_win_language_id(voice);
+   bool res               = false;
+   const char* speeds[10] = {"-10", "-7.5", "-5", "-2.5", "0", "2", "4", "6", "8", "10"};
+   size_t nbytes_cmd = 0;
+   if (speed < 1)
+      speed = 1;
+   else if (speed > 10)
+      speed = 10;
+
+   if (priority < 10)
+   {
+      if (is_narrator_running_windows())
+         return true;
+   
+   }
+#ifdef HAVE_NVDA
+   init_nvda();
+#endif
+   
+   if (USE_POWERSHELL)
+   {
+      const char * template_lang = "powershell.exe -NoProfile -WindowStyle Hidden -Command \"Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.SelectVoice(\\\"%s\\\"); $synth.Rate = %s; $synth.Speak($input);\"";
+      const char * template_nolang = "powershell.exe -NoProfile -WindowStyle Hidden -Command \"Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Rate = %s; $synth.Speak($input);\"";
+      if (strlen(language) > 0)
+         snprintf(cmd, sizeof(cmd), template_lang, language, speeds[speed-1]);
+      else
+         snprintf(cmd, sizeof(cmd), template_nolang, speeds[speed-1]);
+
+      if (pi_set)
+         terminate_win32_process(g_pi);
+      pi_set = create_win32_process(cmd, speak_text);
+   }
+#ifdef HAVE_NVDA
+   else if (USE_NVDA)
+   {
+      wchar_t        *wc = utf8_to_utf16_string_alloc(speak_text);
+      long res           = nvdaController_testIfRunning_func();
+
+      if (!wc || res != 0) 
+      {
+         RARCH_LOG("Error communicating with NVDA\n");
+         if (wc)
+            free(wc);
+         return false;
+      }
+
+      nvdaController_cancelSpeech_func();
+
+      if (USE_NVDA_BRAILLE)
+         nvdaController_brailleMessage_func(wc);
+      else
+         nvdaController_speakText_func(wc);
+      free(wc);
+   }
+#endif
+#ifdef HAVE_SAPI
+   else
+   {
+      HRESULT hr;
+      /* stop the old voice if running */
+      if (pVoice)
+      {
+         CoUninitialize();
+         ISpVoice_Release(pVoice);
+      }
+      pVoice = NULL;
+
+      /* Play the new voice */
+      if (FAILED(CoInitialize(NULL)))
+         return NULL;
+
+      hr = CoCreateInstance(&CLSID_SpVoice, NULL,
+            CLSCTX_ALL, &IID_ISpVoice, (void **)&pVoice);
+
+      if (SUCCEEDED(hr))
+      {
+         wchar_t        *wc = utf8_to_utf16_string_alloc(speak_text);
+         if (!wc)
+            return false;
+         hr = ISpVoice_Speak(pVoice, wc, SPF_ASYNC /*SVSFlagsAsync*/, NULL);
+         free(wc);
+      }
+   }
+#endif
+
+   return true;
+}
+#endif
+
 frontend_ctx_driver_t frontend_ctx_win32 = {
-   frontend_win32_environment_get,
-   frontend_win32_init,
-   NULL,                           /* deinit */
+   frontend_win32_env_get,         /* env_get   */
+   frontend_win32_init,            /* init      */
+   NULL,                           /* deinit    */
+#if defined(_WIN32) && !defined(_XBOX)
+   frontend_win32_respawn,         /* exitspawn */
+#else
    NULL,                           /* exitspawn */
+#endif
    NULL,                           /* process_args */
    NULL,                           /* exec */
+#if defined(_WIN32) && !defined(_XBOX)
+   frontend_win32_set_fork,        /* set_fork */
+#else
    NULL,                           /* set_fork */
-   NULL,                           /* shutdown */
-   NULL,                           /* get_name */
+#endif
+   NULL,                           /* shutdown                  */
+   NULL,                           /* get_name                  */
    frontend_win32_get_os,
-   NULL,                           /* get_rating */
-   NULL,                           /* load_content */
-   frontend_win32_get_architecture,
+   NULL,                           /* get_rating                */
+   NULL,                           /* content_loaded            */
+   frontend_win32_get_arch,        /* get_architecture          */
    frontend_win32_get_powerstate,
    frontend_win32_parse_drive_list,
-   frontend_win32_get_mem_total,
-   frontend_win32_get_mem_used,
-   NULL,                            /* install_signal_handler */
-   NULL,                            /* get_sighandler_state */
-   NULL,                            /* set_sighandler_state */
+   frontend_win32_get_total_mem,
+   frontend_win32_get_free_mem,
+   NULL,                            /* install_signal_handler   */
+   NULL,                            /* get_sighandler_state     */
+   NULL,                            /* set_sighandler_state     */
    NULL,                            /* destroy_sighandler_state */
-   frontend_win32_attach_console,   /* attach_console */
-   frontend_win32_detach_console,   /* detach_console */
-   NULL,                            /* watch_path_for_changes */
-   NULL,                            /* check_for_path_changes */
+   frontend_win32_attach_console,   /* attach_console           */
+   frontend_win32_detach_console,   /* detach_console           */
+   NULL,                            /* get_lakka_version        */
+   NULL,                            /* set_screen_brightness    */
+   NULL,                            /* watch_path_for_changes   */
+   NULL,                            /* check_for_path_changes   */
    NULL,                            /* set_sustained_performance_mode */
-   "win32"
+   frontend_win32_get_cpu_model_name,
+   frontend_win32_get_user_language,
+#if defined(_WIN32) && !defined(_XBOX)
+   is_narrator_running_windows,     /* is_narrator_running */
+   accessibility_speak_windows,     /* accessibility_speak */
+#else
+   NULL,                            /* is_narrator_running */
+   NULL,                            /* accessibility_speak */
+#endif
+   "win32",                         /* ident               */
+   NULL                             /* get_video_driver    */
 };

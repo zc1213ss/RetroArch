@@ -16,13 +16,16 @@ DEFINES :=
 ifeq ($(GRIFFIN_BUILD), 1)
 	OBJ += griffin/griffin.o
 	DEFINES += -DHAVE_GRIFFIN=1
-	DEFINES += -DHAVE_MENU -DHAVE_LIBRETRODB
-	DEFINES += -DHAVE_ZLIB -DHAVE_RPNG -DHAVE_RJPEG -DHAVE_RBMP -DHAVE_RTGA -DWANT_ZLIB -DHAVE_CC_RESAMPLER
+	DEFINES += -DHAVE_MENU -DHAVE_LIBRETRODB -DHAVE_CONFIGFILE -DHAVE_PATCH -DHAVE_SCREENSHOTS -DHAVE_CHEATS
+	DEFINES += -DHAVE_REWIND
+	DEFINES += -DHAVE_ZLIB -DHAVE_RPNG -DHAVE_RJPEG -DHAVE_RBMP -DHAVE_RTGA -DHAVE_CC_RESAMPLER
 	ifeq ($(DEBUG), 1)
 		DEFINES += -DHAVE_NETLOGGER
 	endif
 else
 
+   HAVE_DSP_FILTER := 1
+   HAVE_VIDEO_FILTER := 1
 	HAVE_FILTERS_BUILTIN	:= 1
 	HAVE_LANGEXTRA		:= 0
 	HAVE_RPNG		:= 1
@@ -30,18 +33,25 @@ else
 	HAVE_RBMP		:= 1
 	HAVE_RTGA		:= 1
 	HAVE_ZLIB		:= 1
-	HAVE_OVERLAY	:= 1
+	HAVE_OVERLAY		:= 1
+	HAVE_VIDEO_LAYOUT := 0
 	HAVE_7ZIP		:= 1
 	HAVE_EGL 		:= 1
-	HAVE_OPENGLES  := 1
+	HAVE_GFX_WIDGETS := 1
+	HAVE_GLSL      := 1
+	HAVE_OPENGLES  		:= 1
 	HAVE_NETWORKING		:= 0
 	HAVE_SOCKET_LEGACY	:= 0
 	HAVE_MENU		:= 1
 	HAVE_MENU_COMMON	:= 1
+	HAVE_CONFIGFILE := 1
+   HAVE_SCREENSHOTS := 1
+   HAVE_REWIND      := 1
+	HAVE_PATCH      := 1
+   HAVE_CHEATS       := 1
 	HAVE_RGUI		:= 0
-	HAVE_MATERIALUI := 0
-	HAVE_XMB			:= 1
-	HAVE_ZARCH		:= 0
+	HAVE_MATERIALUI 	:= 0
+	HAVE_XMB		:= 1
 	HAVE_THREADS		:= 1
 	HAVE_LIBRETRODB		:= 1
 	HAVE_CC_RESAMPLER	:= 1
@@ -58,11 +68,6 @@ else
 	CFLAGS += $(DEF_FLAGS)
 	BLACKLIST :=
 	OBJ := $(filter-out $(BLACKLIST),$(OBJ))
-
-	OBJ += input/drivers/ps4_input.o
-	OBJ += input/drivers_joypad/ps4_joypad.o
-	OBJ += audio/drivers/psp_audio.o
-	#OBJ += frontend/drivers/platform_orbis.o
 endif
 
 ifeq ($(strip $(PS4SDK)),)
@@ -82,7 +87,7 @@ STRIP   := $(PREFIX)strip
 NM      := $(PREFIX)nm
 LD      := $(CXX)
 
-INCDIRS := -I. -Ideps/libz -Ideps/7zip -Ilibretro-common/include -Ideps/stb
+INCDIRS := -I. -Ideps/7zip -Ilibretro-common/include -Ideps/stb -Ilibretro-common/include/compat/zlib
 LIBDIRS := -L.
 
 ARCHFLAGS := -m64 -DORBIS
@@ -118,12 +123,12 @@ ifeq ($(WHOLE_ARCHIVE_LINK), 1)
    WHOLE_START := -Wl,--whole-archive
    WHOLE_END := -Wl,--no-whole-archive
 endif
-CXXFLAGS := $(CFLAGS) 
+CXXFLAGS := $(CFLAGS)
 
 PS4_LIBS := -lps4link -ldebugnet -lorbisFile -lelfloader -lorbisKeyboard -lorbis2d -lpng -lz -lorbisGl -lorbisPad -lorbisAudio -lmod -lorbisFileBrowser -lorbisXbmFont -lSceNet_stub -lScePigletv2VSH_stub -lSceSystemService_stub -lSceUserService_stub -lScePad_stub -lSceAudioOut_stub -lSceIme_stub -lSceSysmodule_stub \
 	-lPs4_extension_kernel_call_standard -lPs4_extension_kernel_execute_dynlib_prepare_dlclose -lPs4_common_kernel -lPs4_common_user -lPs4_common_generic -lPs4LibCInternalAdaptive_stub -lPs4LibKernelAdaptive_stub -lSceLibcInternal_stub -lkernel_stub -lps4Kernel_stub -lPs4_base_stub_resolve_minimal -lPs4_base_kernel_dlsym_standard -lPs4_base_kernel_seek_elf_address_standard -lPs4_base_assembler_register_parameter_standard -lPs4_base_assembler_system_call_standard
 
-LIBS	:= $(WHOLE_START) -lretro_orbis $(WHOLE_END) $(PS4_LIBS) 
+LIBS	:= $(WHOLE_START) -lretro_orbis $(WHOLE_END) $(PS4_LIBS)
 
 TARGETS := $(TARGET).elf
 
@@ -158,10 +163,10 @@ $(TARGET).elf: $(OBJ) libretro_orbis.a
 	$(LD) $(CRTFILE) $(OBJ) $(LDFLAGS) $(LIBDIRS) $(LIBS) -o $@
 
 clean:
-	rm -f $(OBJ) $(TARGET).elf 
+	rm -f $(OBJ) $(TARGET).elf
 	rm -f $(OBJ:.o=.depend)
 
-.PHONY: clean all 
+.PHONY: clean all
 .PRECIOUS: %.depend
 
 -include $(OBJ:.o=.depend)

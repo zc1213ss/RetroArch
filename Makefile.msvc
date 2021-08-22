@@ -11,6 +11,11 @@ WindowsSdkDir = C:\Program Files (x86)\Windows Kits\10\$(NOTHING)
 WindowsSDKVersion := 10.0.14393.0\$(NOTHING)
 VCINSTALLDIR := C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\$(NOTHING)
 
+HAVE_DSP_FILTER          := 1
+HAVE_VIDEO_FILTER        := 1
+HAVE_SCREENSHOTS         := 1
+HAVE_REWIND              := 1
+HAVE_AUDIOMIXER          := 1
 HAVE_D3DX                := 1
 HAVE_D3D8                := 0
 HAVE_D3D9                := 1
@@ -19,6 +24,8 @@ HAVE_D3D11               := 1
 HAVE_D3D12               := 1
 HAVE_CG                  := 1
 HAVE_OPENGL              := 1
+HAVE_OPENGL1             := 1
+HAVE_GFX_WIDGETS			 := 1
 HAVE_VULKAN              := 1
 HAVE_XAUDIO              := 1
 HAVE_XINPUT              := 1
@@ -28,7 +35,8 @@ HAVE_WINMM               := 1
 
 HAVE_RPNG                := 1
 HAVE_ZLIB                := 1
-WANT_ZLIB                := 1
+HAVE_CONFIGFILE          := 1
+HAVE_PATCH               := 1
 HAVE_MENU                := 1
 HAVE_RGUI                := 1
 HAVE_XMB                 := 1
@@ -52,10 +60,27 @@ HAVE_7ZIP                := 1
 HAVE_NETWORKING          := 1
 HAVE_NETWORK_CMD         := 1
 HAVE_OVERLAY             := 1
+HAVE_VIDEO_LAYOUT        := 0
 HAVE_LANGEXTRA           := 1
 HAVE_CHEEVOS             := 1
 HAVE_SHADERPIPELINE      := 1
 HAVE_IMAGEVIEWER         := 1
+HAVE_BSV_MOVIE           := 1
+HAVE_CHEATS              := 1
+
+ifeq ($(HAVE_D3D8), 1)
+   D3D8_LIBS := -ld3d8
+   ifeq ($(HAVE_D3DX), 1)
+      D3DX8_LIBS := -ld3dx8
+   endif
+endif
+
+ifeq ($(HAVE_D3D9), 1)
+   D3D9_LIBS := -ld3d9
+   ifeq ($(HAVE_D3DX), 1)
+      D3DX9_LIBS := -ld3dx9
+   endif
+endif
 
 include Makefile.common
 INCLUDE_DIRS := $(patsubst  -isystem%,-I%,$(INCLUDE_DIRS))
@@ -120,7 +145,7 @@ endif
 FLAGS  += -nologo -MP
 FLAGS  += -Gm- -Zc:inline -fp:precise -Zc:forScope -GR- -Gd -Oi -volatile:iso
 #FLAGS  += -Zc:wchar_t -Zp16 -Z7
-#FLAGS += -utf-8
+FLAGS += -utf-8
 #FLAGS += -source-charset:utf-8
 
 CXXFLAGS += $(CFLAGS) -TP -EHsc
@@ -174,10 +199,8 @@ else
    OBJ := $(filter-out $(BLACKLIST),$(OBJ))
 endif
 
-DEFINES += -DRARCH_INTERNAL -DHAVE_DYNAMIC -DJSON_STATIC
+DEFINES += -DRARCH_INTERNAL -DHAVE_SCREENSHOTS -DHAVE_REWIND -DHAVE_DYNAMIC -DJSON_STATIC
 INCLUDE_DIRS += -I. -Igfx/include
-
-#OBJ := version_git.o
 
 OBJ := $(patsubst %rarch.o,%rarch.res,$(OBJ))
 OBJ := $(addprefix $(BUILD_DIR)/,$(OBJ))

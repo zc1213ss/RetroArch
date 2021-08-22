@@ -1,6 +1,6 @@
 HAVE_FILE_LOGGER=1
-HAVE_CC_RESAMPLER=1
-NEED_CXX_LINKER=0
+NEED_CXX_LINKER?=0
+NEED_GOLD_LINKER?=0
 MISSING_DECLS   =0
 
 ifneq ($(C90_BUILD),)
@@ -14,15 +14,24 @@ include config.mk
 # (It'd be better to put this comment in that file, but .gitignore doesn't work on files that exist in the repo.)
 -include Makefile.local
 
+ifeq ($(HAVE_ANGLE), 1)
+TARGET = retroarch_angle
+else
 TARGET = retroarch
+endif
 
 OBJ :=
 LIBS :=
-DEF_FLAGS :=
+DEF_FLAGS := -I.
+ASFLAGS :=
 DEFINES := -DHAVE_CONFIG_H -DRARCH_INTERNAL -D_FILE_OFFSET_BITS=64
 DEFINES += -DGLOBAL_CONFIG_DIR='"$(GLOBAL_CONFIG_DIR)"'
 
 OBJDIR_BASE := obj-unix
+
+ifeq ($(NEED_GOLD_LINKER), 1)
+   LDFLAGS += -fuse-ld=gold
+endif
 
 ifeq ($(DEBUG), 1)
    OBJDIR := $(OBJDIR_BASE)/debug
@@ -36,6 +45,8 @@ else
    DEF_FLAGS += -ffast-math
 endif
 
+DEF_FLAGS += -Wall
+
 ifneq ($(findstring BSD,$(OS)),)
    DEF_FLAGS += -DBSD
    LDFLAGS += -L/usr/local/lib
@@ -48,6 +59,10 @@ ifneq ($(findstring DOS,$(OS)),)
    LDFLAGS += -lemu
 endif
 
+ifneq ($(findstring FPGA,$(OS)),)
+   DEFINES += -DHAVE_FPGA
+endif
+
 ifneq ($(findstring Win32,$(OS)),)
    LDFLAGS += -static-libgcc -lwinmm
 endif
@@ -55,7 +70,7 @@ endif
 include Makefile.common
 
 ifeq ($(shell $(CC) -v 2>&1 | grep -c "clang"),1)
-   DEFINES +=  -Wno-invalid-source-encoding -Wno-incompatible-ms-struct
+   DEF_FLAGS += -Wno-invalid-source-encoding -Wno-incompatible-ms-struct
 endif
 
 ifeq ($(shell $(CC) -v 2>&1 | grep -c "tcc"),1)
@@ -67,7 +82,7 @@ endif
 HEADERS = $(wildcard */*/*.h) $(wildcard */*.h) $(wildcard *.h)
 
 ifeq ($(MISSING_DECLS), 1)
-   DEFINES += -Werror=missing-declarations
+   DEF_FLAGS += -Werror=missing-declarations
 endif
 
 ifeq ($(HAVE_DYLIB), 1)
@@ -93,10 +108,20 @@ ifneq ($(findstring Win32,$(OS)),)
    LDFLAGS += -mwindows
 endif
 
-DEF_FLAGS += -Wall $(INCLUDE_DIRS) -I. -Ideps -Ideps/stb
+ifneq ($(CXX_BUILD), 1)
+   ifneq ($(C89_BUILD),)
+      CFLAGS += -std=c89 -ansi -pedantic -Werror=pedantic -Wno-long-long
+   else ifeq ($(HAVE_C99), 1)
+      CFLAGS += $(C99_CFLAGS)
+   endif
+
+   CFLAGS += -D_GNU_SOURCE
+endif
+
+DEF_FLAGS += $(INCLUDE_DIRS) -Ideps -Ideps/stb
 
 CFLAGS += $(DEF_FLAGS)
-CXXFLAGS += $(DEF_FLAGS) -std=c++11 -D__STDC_CONSTANT_MACROS
+CXXFLAGS += $(DEF_FLAGS) -D__STDC_CONSTANT_MACROS
 OBJCFLAGS :=  $(CFLAGS) -D__STDC_CONSTANT_MACROS
 
 ifeq ($(HAVE_CXX), 1)
@@ -112,29 +137,6 @@ ifeq ($(HAVE_CXX), 1)
    endif
 else
    LINK = $(CC)
-endif
-
-ifneq ($(CXX_BUILD), 1)
-   ifneq ($(GNU90_BUILD), 1)
-      ifneq ($(findstring icc,$(CC)),)
-         CFLAGS += -std=c99 -D_GNU_SOURCE
-      else
-         CFLAGS += -std=gnu99 -D_GNU_SOURCE
-      endif
-   endif
-
-   ifneq ($(C89_BUILD),)
-      CFLAGS += -std=c89 -ansi -pedantic -Werror=pedantic -Wno-long-long
-   endif
-endif
-
-ifeq ($(NOUNUSED), yes)
-   CFLAGS += -Wno-unused-result
-   CXXFLAGS += -Wno-unused-result
-endif
-ifeq ($(NOUNUSED_VARIABLE), yes)
-   CFLAGS += -Wno-unused-variable
-   CXXFLAGS += -Wno-unused-variable
 endif
 
 RARCH_OBJ := $(addprefix $(OBJDIR)/,$(OBJ))
@@ -171,7 +173,7 @@ all: $(TARGET) config.mk
 $(MOC_SRC):
 	@$(if $(Q), $(shell echo echo MOC $<),)
 	$(eval MOC_TMP := $(patsubst %.h,%_moc.cpp,$@))
-	$(Q)$(MOC) -o $(MOC_TMP) $<
+	$(Q)QT_SELECT=$(QT_VERSION) $(MOC) -o $(MOC_TMP) $<
 
 $(foreach x,$(join $(addsuffix :,$(MOC_SRC)),$(MOC_HEADERS)),$(eval $x))
 
@@ -185,12 +187,16 @@ ifeq ($(MAKECMDGOALS),clean)
 config.mk:
 else
 -include $(RARCH_OBJ:.o=.d)
+ifeq ($(HAVE_CONFIG_MK),)
 config.mk: configure qb/*
 	@echo "config.mk is outdated or non-existing. Run ./configure again."
 	@exit 1
 endif
+endif
 
-retroarch: $(RARCH_OBJ)
+SYMBOL_MAP := -Wl,-Map=output.map
+
+$(TARGET): $(RARCH_OBJ)
 	@$(if $(Q), $(shell echo echo LD $@),)
 	$(Q)$(LINK) -o $@ $(RARCH_OBJ) $(LIBS) $(LDFLAGS) $(LIBRARY_DIRS)
 
@@ -209,13 +215,6 @@ $(OBJDIR)/%.o: %.m
 	@$(if $(Q), $(shell echo echo OBJC $<),)
 	$(Q)$(CXX) $(OBJCFLAGS) $(DEFINES) -MMD -c -o $@ $<
 
-.FORCE:
-
-$(OBJDIR)/git_version.o: git_version.c .FORCE
-	@mkdir -p $(dir $@)
-	@$(if $(Q), $(shell echo echo CC $<),)
-	$(Q)$(CC) $(CFLAGS) $(DEFINES) -MMD -c -o $@ $<
-
 $(OBJDIR)/%.o: %.S config.h config.mk $(HEADERS)
 	@mkdir -p $(dir $@)
 	@$(if $(Q), $(shell echo echo AS $<),)
@@ -227,16 +226,17 @@ $(OBJDIR)/%.o: %.rc $(HEADERS)
 	$(Q)$(WINDRES) -o $@ $<
 
 install: $(TARGET)
-	rm -f $(OBJDIR)/git_version.o
 	mkdir -p $(DESTDIR)$(BIN_DIR) 2>/dev/null || /bin/true
 	mkdir -p $(DESTDIR)$(GLOBAL_CONFIG_DIR) 2>/dev/null || /bin/true
 	mkdir -p $(DESTDIR)$(DATA_DIR)/applications 2>/dev/null || /bin/true
+	mkdir -p $(DESTDIR)$(DATA_DIR)/metainfo 2>/dev/null || /bin/true
 	mkdir -p $(DESTDIR)$(DOC_DIR) 2>/dev/null || /bin/true
 	mkdir -p $(DESTDIR)$(MAN_DIR)/man6 2>/dev/null || /bin/true
 	mkdir -p $(DESTDIR)$(DATA_DIR)/pixmaps 2>/dev/null || /bin/true
 	cp $(TARGET) $(DESTDIR)$(BIN_DIR)
 	cp tools/cg2glsl.py $(DESTDIR)$(BIN_DIR)/retroarch-cg2glsl
 	cp retroarch.cfg $(DESTDIR)$(GLOBAL_CONFIG_DIR)
+	cp com.libretro.RetroArch.appdata.xml $(DESTDIR)$(DATA_DIR)/metainfo
 	cp retroarch.desktop $(DESTDIR)$(DATA_DIR)/applications
 	cp docs/retroarch.6 $(DESTDIR)$(MAN_DIR)/man6
 	cp docs/retroarch-cg2glsl.6 $(DESTDIR)$(MAN_DIR)/man6
@@ -247,20 +247,15 @@ install: $(TARGET)
 	chmod 755 $(DESTDIR)$(BIN_DIR)/retroarch-cg2glsl
 	chmod 644 $(DESTDIR)$(GLOBAL_CONFIG_DIR)/retroarch.cfg
 	chmod 644 $(DESTDIR)$(DATA_DIR)/applications/retroarch.desktop
+	chmod 644 $(DESTDIR)$(DATA_DIR)/metainfo/com.libretro.RetroArch.appdata.xml
 	chmod 644 $(DESTDIR)$(MAN_DIR)/man6/retroarch.6
 	chmod 644 $(DESTDIR)$(MAN_DIR)/man6/retroarch-cg2glsl.6
 	chmod 644 $(DESTDIR)$(DATA_DIR)/pixmaps/retroarch.svg
 	@if test -d media/assets && test $(HAVE_ASSETS); then \
 		echo "Installing media assets..."; \
 		mkdir -p $(DESTDIR)$(ASSETS_DIR)/assets; \
-		if test $(HAVE_ZARCH) = 1; then \
-			cp -r media/assets/zarch/ $(DESTDIR)$(ASSETS_DIR)/assets; \
-		fi; \
 		if test $(HAVE_MATERIALUI) = 1; then \
 			cp -r media/assets/glui/ $(DESTDIR)$(ASSETS_DIR)/assets; \
-		fi; \
-		if test $(HAVE_NUKLEAR) = 1; then \
-			cp -r media/assets/nuklear/ $(DESTDIR)$(ASSETS_DIR)/assets; \
 		fi; \
 		if test $(HAVE_XMB) = 1; then \
 			cp -r media/assets/xmb/ $(DESTDIR)$(ASSETS_DIR)/assets; \
@@ -273,10 +268,11 @@ install: $(TARGET)
 	fi
 
 uninstall:
-	rm -f $(DESTDIR)$(BIN_DIR)/retroarch
+	rm -f $(DESTDIR)$(BIN_DIR)/$(TARGET)
 	rm -f $(DESTDIR)$(BIN_DIR)/retroarch-cg2glsl
 	rm -f $(DESTDIR)$(GLOBAL_CONFIG_DIR)/retroarch.cfg
 	rm -f $(DESTDIR)$(DATA_DIR)/applications/retroarch.desktop
+	rm -f $(DESTDIR)$(DATA_DIR)/metainfo/com.libretro.RetroArch.appdata.xml
 	rm -f $(DESTDIR)$(DATA_DIR)/pixmaps/retroarch.svg
 	rm -f $(DESTDIR)$(DOC_DIR)/COPYING
 	rm -f $(DESTDIR)$(DOC_DIR)/COPYING.assets

@@ -17,7 +17,7 @@ typedef Thread compat_thread;
 typedef CondVar compat_condvar;
 
 #define compat_thread_create(thread, func, data, stack_size, prio, cpu) \
-   threadCreate(thread, func, data, stack_size, prio, cpu)
+   threadCreate(thread, func, data, NULL, stack_size, prio, cpu)
 #define compat_thread_start(thread) \
    threadStart(thread)
 #define compat_thread_join(thread) \
@@ -45,6 +45,10 @@ typedef AudioOutBuffer compat_audio_out_buffer;
 #define switch_audio_ipc_output_append_buffer(a, b) audoutAppendAudioOutBuffer(b)
 #define switch_audio_ipc_output_stop(a) audoutStopAudioOut()
 #define switch_audio_ipc_output_start(a) audoutStartAudioOut()
+
+#ifndef UINT64_MAX
+#define UINT64_MAX U64_MAX
+#endif
 
 #else
 

@@ -20,7 +20,7 @@
 #include <stdint.h>
 
 #include "switch_audio_compat.h"
-#include "../audio_driver.h"
+#include "../../retroarch.h"
 #include "../../verbosity.h"
 
 #ifdef HAVE_LIBNX
@@ -29,10 +29,11 @@
 #define BUFFER_COUNT 3
 #endif
 
-static const int sample_rate           = 48000;
-static const int max_num_samples       = sample_rate;
-static const int num_channels          = 2;
-static const size_t sample_buffer_size = ((max_num_samples * num_channels * sizeof(uint16_t)) + 0xfff) & ~0xfff;
+
+#define SAMPLE_RATE 48000
+#define NUM_CHANNELS 2
+
+#define SAMPLE_BUFFER_SIZE (((SAMPLE_RATE * NUM_CHANNELS * sizeof(uint16_t)) + 0xfff) & ~0xfff)
 
 typedef struct
 {
@@ -49,24 +50,26 @@ typedef struct
 #endif
 } switch_audio_t;
 
+#ifdef HAVE_LIBNX
 static uint32_t switch_audio_data_size(void)
 {
-#ifdef HAVE_LIBNX
-   static const int framerate = 1000 / 30;
-   static const int samplecount = (sample_rate / framerate);
-   return (samplecount * num_channels * sizeof(uint16_t));
-#else
-   return sample_buffer_size;
-#endif
+   static const int framerate    = 1000 / 30;
+   static const int sample_count = (SAMPLE_RATE / framerate);
+   return (sample_count * NUM_CHANNELS * sizeof(uint16_t));
 }
+#else
+static uint32_t switch_audio_data_size(void)
+{
+   return SAMPLE_BUFFER_SIZE;
+}
+#endif
 
 static size_t switch_audio_buffer_size(void *data)
 {
-   (void) data;
 #ifdef HAVE_LIBNX
    return (switch_audio_data_size() + 0xfff) & ~0xfff;
 #else
-   return sample_buffer_size;
+   return SAMPLE_BUFFER_SIZE;
 #endif
 }
 
@@ -83,7 +86,7 @@ static ssize_t switch_audio_write(void *data, const void *buf, size_t size)
       uint32_t num;
       if (switch_audio_ipc_output_get_released_buffer(swa, num) != 0)
       {
-         RARCH_LOG("Failed to get released buffer?\n");
+         RARCH_ERR("[Audio]: Failed to get released buffer?\n");
          return -1;
       }
 
@@ -92,27 +95,27 @@ static ssize_t switch_audio_write(void *data, const void *buf, size_t size)
 
       if (!swa->current_buffer)
       {
-         if (swa->blocking)
+         /* no buffer, nonblocking... */
+         if (!swa->blocking)
+            return 0;
+
+         while (!swa->current_buffer)
          {
-            while(swa->current_buffer == NULL)
-            {
-               uint32_t handle_idx = 0;
-               num                 = 0;
+#ifndef HAVE_LIBNX
+            uint32_t handle_idx = 0;
+#endif
+            num                 = 0;
 
 #ifdef HAVE_LIBNX
-               if (audoutWaitPlayFinish(&swa->current_buffer, &num, U64_MAX) != 0) { }
+            if (audoutWaitPlayFinish(&swa->current_buffer, &num, UINT64_MAX) != 0) { }
 #else
-               svcWaitSynchronization(&handle_idx, &swa->event, 1, 33333333);
-               svcResetSignal(swa->event);
+            svcWaitSynchronization(&handle_idx, &swa->event, 1, 33333333);
+            svcResetSignal(swa->event);
 
-               if (switch_audio_ipc_output_get_released_buffer(swa, num) != 0)
-                  return -1;
+            if (switch_audio_ipc_output_get_released_buffer(swa, num) != 0)
+               return -1;
 #endif
-            }
          }
-         else
-            /* no buffer, nonblocking... */
-            return 0;
       }
 
       swa->current_buffer->data_size = 0;
@@ -120,12 +123,12 @@ static ssize_t switch_audio_write(void *data, const void *buf, size_t size)
 
 	if (to_write > switch_audio_buffer_size(NULL) - swa->current_buffer->data_size)
 		to_write = switch_audio_buffer_size(NULL) - swa->current_buffer->data_size;
-	
-   #ifndef HAVE_LIBNX
-	memcpy(((uint8_t*) swa->current_buffer->sample_data) + swa->current_buffer->data_size, buf, to_write);
-   #else
-	memcpy(((uint8_t*) swa->current_buffer->buffer) + swa->current_buffer->data_size, buf, to_write);
-   #endif
+
+#ifndef HAVE_LIBNX
+   memcpy(((uint8_t*) swa->current_buffer->sample_data) + swa->current_buffer->data_size, buf, to_write);
+#else
+   memcpy(((uint8_t*) swa->current_buffer->buffer) + swa->current_buffer->data_size, buf, to_write);
+#endif
 	swa->current_buffer->data_size   += to_write;
 	swa->current_buffer->buffer_size  = switch_audio_buffer_size(NULL);
 
@@ -137,7 +140,7 @@ static ssize_t switch_audio_write(void *data, const void *buf, size_t size)
 	}
 
 	swa->last_append = svcGetSystemTick();
-	
+
 	return to_write;
 }
 
@@ -149,7 +152,6 @@ static bool switch_audio_stop(void *data)
 
    /* TODO/FIXME - fix libnx codepath */
 #ifndef HAVE_LIBNX
-
    if (!swa->is_paused)
 	   if (switch_audio_ipc_output_stop(swa) != 0)
 		   return false;
@@ -209,8 +211,7 @@ static void switch_audio_free(void *data)
 
 static bool switch_audio_use_float(void *data)
 {
-	(void) data;
-	return false; /* force INT16 */
+   return false; /* force INT16 */
 }
 
 static size_t switch_audio_write_avail(void *data)
@@ -237,8 +238,10 @@ static void *switch_audio_init(const char *device,
       unsigned *new_rate)
 {
    unsigned i;
+#ifndef HAVE_LIBNX
    char names[8][0x20];
    uint32_t num_names  = 0;
+#endif
    switch_audio_t *swa = (switch_audio_t*) calloc(1, sizeof(*swa));
 
    if (!swa)
@@ -263,16 +266,16 @@ static void *switch_audio_init(const char *device,
    if (audio_ipc_open_output(names[0], &swa->output) != 0)
       goto fail_audio_ipc;
 
-   if (swa->output.sample_rate != sample_rate)
+   if (swa->output.sample_rate != SAMPLE_RATE)
    {
       RARCH_ERR("expected sample rate of %d, got sample rate of %d\n",
-            sample_rate, swa->output.sample_rate);
+            SAMPLE_RATE, swa->output.sample_rate);
       goto fail_audio_output;
    }
 
-   if (swa->output.num_channels != num_channels)
+   if (swa->output.num_channels != NUM_CHANNELS)
    {
-      RARCH_ERR("expected %d channels, got %d\n", num_channels,
+      RARCH_ERR("expected %d channels, got %d\n", NUM_CHANNELS,
             swa->output.num_channels);
       goto fail_audio_output;
    }
@@ -297,16 +300,17 @@ static void *switch_audio_init(const char *device,
       swa->buffers[i].data_offset = 0;
       swa->buffers[i].buffer      = memalign(0x1000, switch_audio_buffer_size(NULL));
 
-      if (swa->buffers[i].buffer == NULL)
+      if (!swa->buffers[i].buffer)
          goto fail_audio_output;
 
       memset(swa->buffers[i].buffer, 0, switch_audio_buffer_size(NULL));
 #else
       swa->buffers[i].ptr         = &swa->buffers[i].sample_data;
       swa->buffers[i].unknown     = 0;
-      swa->buffers[i].sample_data = alloc_pages(sample_buffer_size, switch_audio_buffer_size(NULL), NULL);
+      swa->buffers[i].sample_data = alloc_pages(SAMPLE_BUFFER_SIZE,
+            switch_audio_buffer_size(NULL), NULL);
 
-      if (swa->buffers[i].sample_data == NULL)
+      if (!swa->buffers[i].sample_data)
 	      goto fail_audio_output;
 #endif
 
@@ -328,15 +332,16 @@ static void *switch_audio_init(const char *device,
    swa->is_paused      = true;
 
    RARCH_LOG("[Audio]: Audio initialized\n");
-   
+
    return swa;
 
 fail_audio_output:
 /* TODO/FIXME - fix libnx codepath */
 #ifndef HAVE_LIBNX
    audio_ipc_output_close(&swa->output);
-#endif
 fail_audio_ipc:
+#endif
+
 /* TODO/FIXME - fix libnx codepath */
 #ifndef HAVE_LIBNX
    audio_ipc_finalize();

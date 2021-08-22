@@ -1,5 +1,6 @@
 /*  RetroArch - A frontend for libretro.
  *  Copyright (C) 2014-2018 - Ali Bouhlel
+ *  Copyright (C) 2016-2019 - Brad Parker
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -43,10 +44,12 @@ typedef ID3D12GraphicsCommandList*                D3D12GraphicsCommandList;
 typedef ID3D12CommandQueue*                       D3D12CommandQueue;
 typedef ID3D12Device*                             D3D12Device;
 typedef ID3D12PipelineLibrary*                    D3D12PipelineLibrary;
+#ifdef DEBUG
 typedef ID3D12Debug*                              D3D12Debug;
 typedef ID3D12DebugDevice*                        D3D12DebugDevice;
 typedef ID3D12DebugCommandQueue*                  D3D12DebugCommandQueue;
 typedef ID3D12DebugCommandList*                   D3D12DebugCommandList;
+#endif
 typedef ID3D12InfoQueue*                          D3D12InfoQueue;
 
 static INLINE ULONG D3D12Release(void* object)
@@ -935,6 +938,8 @@ D3D12Serialize(D3D12PipelineLibrary pipeline_library, void* data, SIZE_T data_si
 {
    return pipeline_library->lpVtbl->Serialize(pipeline_library, data, data_size_in_bytes);
 }
+
+#ifdef DEBUG
 static INLINE ULONG D3D12ReleaseDebug(D3D12Debug debug) { return debug->lpVtbl->Release(debug); }
 static INLINE void  D3D12EnableDebugLayer(D3D12Debug debug)
 {
@@ -988,6 +993,8 @@ D3D12GetDebugCommandListFeatureMask(D3D12DebugCommandList debug_command_list)
 {
    return debug_command_list->lpVtbl->GetFeatureMask(debug_command_list);
 }
+#endif
+
 static INLINE ULONG D3D12ReleaseInfoQueue(D3D12InfoQueue info_queue)
 {
    return info_queue->lpVtbl->Release(info_queue);
@@ -1158,11 +1165,12 @@ static INLINE BOOL D3D12GetMuteDebugOutput(D3D12InfoQueue info_queue)
 }
 
 /* end of auto-generated */
-
+#ifdef DEBUG
 static INLINE HRESULT D3D12GetDebugInterface_(D3D12Debug* out)
 {
    return D3D12GetDebugInterface(uuidof(ID3D12Debug), (void**)out);
 }
+#endif
 
 static INLINE HRESULT
 D3D12CreateDevice_(DXGIAdapter adapter, D3D_FEATURE_LEVEL MinimumFeatureLevel, D3D12Device* out)
@@ -1260,8 +1268,10 @@ D3D12GetGPUDescriptorHandleForHeapStart(D3D12DescriptorHeap descriptor_heap)
 #include <gfx/math/matrix_4x4.h>
 
 #include "../common/d3dcompiler_common.h"
-#include "../video_driver.h"
+#include "../../retroarch.h"
 #include "../drivers_shader/slang_process.h"
+
+#define D3D12_MAX_GPU_COUNT 16
 
 typedef struct d3d12_vertex_t
 {
@@ -1337,9 +1347,6 @@ typedef struct ALIGN(16)
    float time;
 } d3d12_uniform_t;
 
-static_assert(
-      (!(sizeof(d3d12_uniform_t) & 0xF)), "sizeof(d3d12_uniform_t) must be a multiple of 16");
-
 typedef struct
 {
    unsigned    cur_mon_id;
@@ -1350,6 +1357,9 @@ typedef struct
 #endif
    DXGIAdapter adapter;
    D3D12Device device;
+
+   IDXGIAdapter1 *adapters[D3D12_MAX_GPU_COUNT];
+   struct string_list *gpu_list;
 
    struct
    {
@@ -1381,6 +1391,7 @@ typedef struct
       float                       clearcolor[4];
       int                         frame_index;
       bool                        vsync;
+      unsigned                    swap_interval;
    } chain;
 
    struct
@@ -1444,6 +1455,7 @@ typedef struct
       D3D12_RECT                      scissorRect;
       pass_semantics_t                semantics;
       uint32_t                        frame_count;
+      int32_t                         frame_direction;
       D3D12_GPU_DESCRIPTOR_HANDLE     textures;
       D3D12_GPU_DESCRIPTOR_HANDLE     samplers;
    } pass[GFX_MAX_SHADERS];

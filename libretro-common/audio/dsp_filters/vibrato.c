@@ -1,4 +1,4 @@
-/* Copyright  (C) 2010-2017 The RetroArch team
+/* Copyright  (C) 2010-2020 The RetroArch team
  *
  * ---------------------------------------------------------------------------------------
  * The following license statement only applies to this file (vibrato.c).
@@ -79,7 +79,7 @@ static void vibratocore_init(struct vibrato_core *core,float depth,int samplerat
 	core->freq = freq;
 	core->depth = depth;
 	core->phase = 0;
-	core->writeindex = 0;		
+	core->writeindex = 0;
 }
 
 float vibratocore_core(struct vibrato_core *core,float in)
@@ -165,4 +165,3 @@ const struct dspfilter_implementation *dspfilter_get_implementation(dspfilter_si
 }
 
 #undef dspfilter_get_implementation
-

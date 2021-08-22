@@ -25,13 +25,55 @@
 #include <boolean.h>
 #include <retro_common_api.h>
 
+
 RETRO_BEGIN_DECLS
 
-void crt_switch_res_core(unsigned width, unsigned height, float hz, unsigned crt_mode, int crt_switch_center_adjust);
+typedef struct videocrt_switch
+{
+   double p_clock;
 
-void crt_aspect_ratio_switch(unsigned width, unsigned height);
+   int center_adjust;
+   int porch_adjust;
+   int tmp_porch_adjust;
+   int tmp_center_adjust;
+   int rtn;
+   unsigned ra_core_width;
+   unsigned ra_core_height;
+   unsigned ra_tmp_width;
+   unsigned ra_tmp_height;
+   unsigned ra_set_core_hz;
+   unsigned index;
+   unsigned int fb_width;
+   unsigned int fb_height;
 
-void crt_video_restore(void);
+   float ra_core_hz;
+   float sr_core_hz;
+   float ra_tmp_core_hz;
+   float fly_aspect;
+   float fb_ra_core_hz;
+
+   bool sr2_active;
+   bool menu_active;
+   bool hh_core;
+
+
+} videocrt_switch_t;
+
+void crt_switch_res_core(
+      videocrt_switch_t *p_switch,
+      unsigned naitive_width,
+      unsigned width,
+      unsigned height,
+      float hz,
+      unsigned crt_mode,
+      int crt_switch_center_adjust,
+      int crt_switch_porch_adjust,
+      int monitor_index,
+      bool dynamic,
+      int super_width,
+      bool hires_menu);
+
+void crt_destroy_modes(videocrt_switch_t *p_switch);
 
 RETRO_END_DECLS
 

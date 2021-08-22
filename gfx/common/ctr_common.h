@@ -16,12 +16,21 @@
 #ifndef CTR_COMMON_H__
 #define CTR_COMMON_H__
 
+#include <3ds.h>
 #include <retro_inline.h>
 
 #define COLOR_ABGR(r, g, b, a) (((unsigned)(a) << 24) | ((b) << 16) | ((g) << 8) | ((r) << 0))
 
 #define CTR_TOP_FRAMEBUFFER_WIDTH   400
 #define CTR_TOP_FRAMEBUFFER_HEIGHT  240
+
+#ifdef USE_CTRULIB_2
+extern u8* gfxTopLeftFramebuffers[2];
+extern u8* gfxTopRightFramebuffers[2];
+extern u8* gfxBottomFramebuffers[2];
+#endif
+
+extern PrintConsole* ctrConsole;
 
 extern const u8 ctr_sprite_shbin[];
 extern const u32 ctr_sprite_shbin_size;
@@ -42,11 +51,12 @@ typedef struct
 
 typedef enum
 {
-   CTR_VIDEO_MODE_NORMAL,
-   CTR_VIDEO_MODE_800x240,
-   CTR_VIDEO_MODE_400x240,
-   CTR_VIDEO_MODE_3D
-}ctr_video_mode_enum;
+	CTR_VIDEO_MODE_3D = 0,
+	CTR_VIDEO_MODE_2D,
+	CTR_VIDEO_MODE_2D_400X240,
+	CTR_VIDEO_MODE_2D_800X240,
+	CTR_VIDEO_MODE_LAST
+} ctr_video_mode_enum;
 
 typedef struct ctr_video
 {
@@ -95,8 +105,16 @@ typedef struct ctr_video
    unsigned rotation;
    bool keep_aspect;
    bool should_resize;
-   bool lcd_buttom_on;
    bool msg_rendering_enabled;
+   bool supports_parallax_disable;
+   bool enable_3d;
+
+#ifdef HAVE_OVERLAY
+   struct ctr_overlay_data *overlay;
+   unsigned overlays;
+   bool overlay_enabled;
+   bool overlay_full_screen;
+#endif
 
    void* empty_framebuffer;
 
@@ -127,6 +145,16 @@ typedef struct ctr_texture
    enum texture_filter_type type;
    void* data;
 } ctr_texture_t;
+
+#ifdef HAVE_OVERLAY
+struct ctr_overlay_data
+{
+   ctr_texture_t texture;
+   ctr_vertex_t* frame_coords;
+   ctr_scale_vector_t scale_vector;
+   float alpha_mod;
+};
+#endif
 
 static INLINE void ctr_set_scale_vector(ctr_scale_vector_t* vec,
       int viewport_width, int viewport_height,

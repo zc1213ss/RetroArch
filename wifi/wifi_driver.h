@@ -22,7 +22,6 @@
 
 #include <boolean.h>
 #include <retro_common_api.h>
-#include <lists/string_list.h>
 
 RETRO_BEGIN_DECLS
 
@@ -31,9 +30,6 @@ enum rarch_wifi_ctl_state
    RARCH_WIFI_CTL_NONE = 0,
    RARCH_WIFI_CTL_DESTROY,
    RARCH_WIFI_CTL_DEINIT,
-   RARCH_WIFI_CTL_SET_OWN_DRIVER,
-   RARCH_WIFI_CTL_UNSET_OWN_DRIVER,
-   RARCH_WIFI_CTL_OWNS_DRIVER,
    RARCH_WIFI_CTL_SET_ACTIVE,
    RARCH_WIFI_CTL_UNSET_ACTIVE,
    RARCH_WIFI_CTL_IS_ACTIVE,
@@ -44,6 +40,22 @@ enum rarch_wifi_ctl_state
    RARCH_WIFI_CTL_INIT
 };
 
+typedef struct wifi_network_info
+{
+   char ssid[33];
+   char passphrase[33];
+   bool connected;
+   bool saved_password;
+   char netid[160];   /* Do not use, internal */
+   /* TODO Add signal strength & other info */
+} wifi_network_info_t;
+
+typedef struct wifi_network_scan
+{
+   time_t scan_time;
+   wifi_network_info_t *net_list;   /* This is an rbuf array */
+} wifi_network_scan_t;
+
 typedef struct wifi_driver
 {
    void *(*init)(void);
@@ -53,16 +65,20 @@ typedef struct wifi_driver
    bool (*start)(void *data);
    void (*stop)(void *data);
 
-   void (*scan)(void);
-   void (*get_ssids)(struct string_list *list);
-   bool (*ssid_is_online)(unsigned i);
-   bool (*connect_ssid)(unsigned i, const char* passphrase);
+   bool (*enable)(void *data, bool enabled);
+   bool (*connection_info)(void *data, wifi_network_info_t *ssid);
+   void (*scan)(void *data);
+   wifi_network_scan_t* (*get_ssids)(void *data);
+   bool (*ssid_is_online)(void *data, unsigned i);
+   bool (*connect_ssid)(void *data, const wifi_network_info_t *netinfo);
+   bool (*disconnect_ssid)(void *data, const wifi_network_info_t *netinfo);
+   void (*tether_start_stop)(void *data, bool start, char* configfile);
 
    const char *ident;
 } wifi_driver_t;
 
 extern wifi_driver_t wifi_connmanctl;
-extern wifi_driver_t wifi_null;
+extern wifi_driver_t wifi_nmcli;
 
 /**
  * config_get_wifi_driver_options:
@@ -75,35 +91,25 @@ extern wifi_driver_t wifi_null;
  **/
 const char* config_get_wifi_driver_options(void);
 
-/**
- * wifi_driver_find_handle:
- * @index              : index of driver to get handle to.
- *
- * Returns: handle to wifi driver at index. Can be NULL
- * if nothing found.
- **/
-const void *wifi_driver_find_handle(int index);
-
-/**
- * wifi_driver_find_ident:
- * @index              : index of driver to get handle to.
- *
- * Returns: Human-readable identifier of wifi driver at index. Can be NULL
- * if nothing found.
- **/
-const char *wifi_driver_find_ident(int index);
-
 void driver_wifi_stop(void);
 
 bool driver_wifi_start(void);
 
+bool driver_wifi_enable(bool);
+
+bool driver_wifi_connection_info(wifi_network_info_t *network);
+
 void driver_wifi_scan(void);
 
-void driver_wifi_get_ssids(struct string_list *list);
+wifi_network_scan_t* driver_wifi_get_ssids(void);
 
 bool driver_wifi_ssid_is_online(unsigned i);
 
-bool driver_wifi_connect_ssid(unsigned i, const char* passphrase);
+bool driver_wifi_connect_ssid(const wifi_network_info_t *netinfo);
+
+bool driver_wifi_disconnect_ssid(const wifi_network_info_t* netinfo);
+
+void driver_wifi_tether_start_stop(bool start, char* configfile);
 
 bool wifi_driver_ctl(enum rarch_wifi_ctl_state state, void *data);
 

@@ -27,7 +27,8 @@
 #include "../../configuration.h"
 #include "../../verbosity.h"
 #include "../../ui/ui_companion_driver.h"
-#include "../video_driver.h"
+#include "../../retroarch.h"
+#include "../frontend/frontend_driver.h"
 #include "win32_common.h"
 
 #if defined(HAVE_DYNAMIC) && !defined(__WINRT__)
@@ -281,62 +282,20 @@ void dxgi_copy(
       void*       dst_data)
 {
    int i, j;
-#if defined(PERF_START) && defined(PERF_STOP)
-   PERF_START();
-#endif
 
    switch ((unsigned)src_format)
    {
       FORMAT_SRC_LIST();
 
       default:
-         assert(0);
-         break;
+      assert(0);
+      break;
    }
-
-#if defined(PERF_START) && defined(PERF_STOP)
-   PERF_STOP();
-#endif
 }
+
 #ifdef _MSC_VER
 #pragma warning(default : 4293)
 #endif
-
-void dxgi_update_title(video_frame_info_t* video_info)
-{
-   const ui_window_t* window = ui_companion_driver_get_window_ptr();
-   const settings_t *settings = config_get_ptr();
-
-   if (settings->bools.video_memory_show)
-   {
-#ifndef __WINRT__
-      MEMORYSTATUS stat;
-      char         mem[128];
-
-      mem[0] = '\0';
-
-      GlobalMemoryStatus(&stat);
-      snprintf(
-            mem, sizeof(mem), " || MEM: %.2f/%.2fMB", stat.dwAvailPhys / (1024.0f * 1024.0f),
-            stat.dwTotalPhys / (1024.0f * 1024.0f));
-      strlcat(video_info->fps_text, mem, sizeof(video_info->fps_text));
-#endif
-   }
-
-   if (window)
-   {
-      char title[128];
-
-      title[0] = '\0';
-
-      video_driver_get_window_title(title, sizeof(title));
-
-#ifndef __WINRT__
-      if (title[0])
-         window->set_title(&main_window, title);
-#endif
-   }
-}
 
 DXGI_FORMAT glslang_format_to_dxgi(glslang_format fmt)
 {

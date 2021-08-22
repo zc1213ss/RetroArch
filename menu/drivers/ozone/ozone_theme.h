@@ -20,104 +20,6 @@
 #include "ozone.h"
 #include "ozone_texture.h"
 
-#include "../../../retroarch.h"
-
-#define HEX_R(hex) ((hex >> 16) & 0xFF) * (1.0f / 255.0f)
-#define HEX_G(hex) ((hex >> 8 ) & 0xFF) * (1.0f / 255.0f)
-#define HEX_B(hex) ((hex >> 0 ) & 0xFF) * (1.0f / 255.0f)
-
-#define COLOR_HEX_TO_FLOAT(hex, alpha) { \
-   HEX_R(hex), HEX_G(hex), HEX_B(hex), alpha, \
-   HEX_R(hex), HEX_G(hex), HEX_B(hex), alpha, \
-   HEX_R(hex), HEX_G(hex), HEX_B(hex), alpha, \
-   HEX_R(hex), HEX_G(hex), HEX_B(hex), alpha  \
-}
-
-#define COLOR_TEXT_ALPHA(color, alpha) (color & 0xFFFFFF00) | alpha
-
-static float ozone_pure_white[16] = {
-      1.00, 1.00, 1.00, 1.00,
-      1.00, 1.00, 1.00, 1.00,
-      1.00, 1.00, 1.00, 1.00,
-      1.00, 1.00, 1.00, 1.00,
-};
-
-static float ozone_backdrop[16] = {
-      0.00, 0.00, 0.00, 0.75,
-      0.00, 0.00, 0.00, 0.75,
-      0.00, 0.00, 0.00, 0.75,
-      0.00, 0.00, 0.00, 0.75,
-};
-
-static float ozone_osk_backdrop[16] = {
-      0.00, 0.00, 0.00, 0.15,
-      0.00, 0.00, 0.00, 0.15,
-      0.00, 0.00, 0.00, 0.15,
-      0.00, 0.00, 0.00, 0.15,
-};
-
-static float ozone_sidebar_background_light[16] = {
-      0.94, 0.94, 0.94, 1.00,
-      0.94, 0.94, 0.94, 1.00,
-      0.94, 0.94, 0.94, 1.00,
-      0.94, 0.94, 0.94, 1.00,
-};
-
-static float ozone_sidebar_gradient_top_light[16] = {
-      0.94, 0.94, 0.94, 1.00,
-      0.94, 0.94, 0.94, 1.00,
-      0.922, 0.922, 0.922, 1.00,
-      0.922, 0.922, 0.922, 1.00,
-};
-
-static float ozone_sidebar_gradient_bottom_light[16] = {
-      0.922, 0.922, 0.922, 1.00,
-      0.922, 0.922, 0.922, 1.00,
-      0.94, 0.94, 0.94, 1.00,
-      0.94, 0.94, 0.94, 1.00,
-};
-
-static float ozone_sidebar_background_dark[16] = {
-      0.2, 0.2, 0.2, 1.00,
-      0.2, 0.2, 0.2, 1.00,
-      0.2, 0.2, 0.2, 1.00,
-      0.2, 0.2, 0.2, 1.00,
-};
-
-static float ozone_sidebar_gradient_top_dark[16] = {
-      0.2, 0.2, 0.2, 1.00,
-      0.2, 0.2, 0.2, 1.00,      
-      0.18, 0.18, 0.18, 1.00,
-      0.18, 0.18, 0.18, 1.00,
-};
-
-static float ozone_sidebar_gradient_bottom_dark[16] = {
-      0.18, 0.18, 0.18, 1.00,
-      0.18, 0.18, 0.18, 1.00,
-      0.2, 0.2, 0.2, 1.00,
-      0.2, 0.2, 0.2, 1.00,
-};
-
-static float ozone_border_0_light[16] = COLOR_HEX_TO_FLOAT(0x50EFD9, 1.00);
-static float ozone_border_1_light[16] = COLOR_HEX_TO_FLOAT(0x0DB6D5, 1.00);
-
-static float ozone_border_0_dark[16] = COLOR_HEX_TO_FLOAT(0x198AC6, 1.00);
-static float ozone_border_1_dark[16] = COLOR_HEX_TO_FLOAT(0x89F1F2, 1.00);
-
-static float ozone_background_libretro_running_light[16] = {
-   0.690, 0.690, 0.690, 0.75,
-   0.690, 0.690, 0.690, 0.75,
-   0.922, 0.922, 0.922, 1.0,
-   0.922, 0.922, 0.922, 1.0
-};
-
-static float ozone_background_libretro_running_dark[16] = {
-   0.176, 0.176, 0.176, 0.75,
-   0.176, 0.176, 0.176, 0.75,
-   0.178, 0.178, 0.178, 1.0,
-   0.178, 0.178, 0.178, 1.0,
-};
-
 typedef struct ozone_theme
 {
    /* Background color */
@@ -139,33 +41,45 @@ typedef struct ozone_theme
    uint32_t text_selected_rgba;
    uint32_t text_sublabel_rgba;
 
+   /* Screensaver 'tint' (RGB24) */
+   uint32_t screensaver_tint;
+
    /* Sidebar color */
    float *sidebar_background;
    float *sidebar_top_gradient;
    float *sidebar_bottom_gradient;
 
-   /* 
+   /*
       Fancy cursor colors
    */
    float *cursor_border_0;
    float *cursor_border_1;
 
-   menu_texture_item textures[OZONE_THEME_TEXTURE_LAST];
+   uintptr_t textures[OZONE_THEME_TEXTURE_LAST];
 
    const char *name;
 } ozone_theme_t;
 
 extern ozone_theme_t ozone_theme_light;
 extern ozone_theme_t ozone_theme_dark;
+extern ozone_theme_t ozone_theme_nord;
+extern ozone_theme_t ozone_theme_gruvbox_dark;
+extern ozone_theme_t ozone_theme_boysenberry;
+extern ozone_theme_t ozone_theme_hacking_the_kernel;
+extern ozone_theme_t ozone_theme_twilight_zone;
+extern ozone_theme_t ozone_theme_dracula;
 
 extern ozone_theme_t *ozone_themes[];
 
-extern unsigned ozone_themes_count;
+/* TODO/FIXME - global variables referenced outside */
+extern const unsigned ozone_themes_count;
 extern unsigned last_color_theme;
 extern bool last_use_preferred_system_color_theme;
 extern ozone_theme_t *ozone_default_theme;
+extern float last_framebuffer_opacity;
 
 void ozone_set_color_theme(ozone_handle_t *ozone, unsigned color_theme);
-unsigned ozone_get_system_theme();
+unsigned ozone_get_system_theme(void);
+void ozone_set_background_running_opacity(ozone_handle_t *ozone, float framebuffer_opacity);
 
 #endif

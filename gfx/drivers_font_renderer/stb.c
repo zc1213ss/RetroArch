@@ -19,6 +19,7 @@
 #include <file/file_path.h>
 #include <streams/file_stream.h>
 #include <retro_miscellaneous.h>
+#include <string/stdstring.h>
 
 #include "../font_driver.h"
 #include "../../verbosity.h"
@@ -36,9 +37,9 @@
 
 typedef struct
 {
-   int     line_height;
-   struct font_atlas atlas;
-   struct font_glyph glyphs[256];
+   struct font_atlas atlas;               /* ptr   alignment */
+   struct font_glyph glyphs[256];         /* unsigned alignment */
+   struct font_line_metrics line_metrics; /* float alignment */
 } stb_font_renderer_t;
 
 static struct font_atlas *font_renderer_stb_get_atlas(void *data)
@@ -85,6 +86,9 @@ static bool font_renderer_stb_create_atlas(stb_font_renderer_t *self,
    if (!self->atlas.buffer)
       goto error;
 
+   /* Note: 1 pixel of padding is added to
+    * prevent texture bleed when drawing with
+    * linear filtering enabled */
    stbtt_PackBegin(&pc, self->atlas.buffer,
          self->atlas.width, self->atlas.height,
          self->atlas.width, 1, NULL);
@@ -108,7 +112,7 @@ static bool font_renderer_stb_create_atlas(stb_font_renderer_t *self,
       g->height            = c->y1 - c->y0;
 
       /* Make sure important characters fit */
-      if (isalnum(i) && (!g->width || !g->height))
+      if (ISALNUM(i) && (!g->width || !g->height))
       {
          int new_width  = width  * 1.2;
          int new_height = height * 1.2;
@@ -141,6 +145,7 @@ error:
 static void *font_renderer_stb_init(const char *font_path, float font_size)
 {
    int ascent, descent, line_gap;
+   float scale_factor;
    stbtt_fontinfo info;
    uint8_t *font_data = NULL;
    stb_font_renderer_t *self = (stb_font_renderer_t*) calloc(1, sizeof(*self));
@@ -151,7 +156,7 @@ static void *font_renderer_stb_init(const char *font_path, float font_size)
    if (!self)
       goto error;
 
-   if (!filestream_read_file(font_path, (void**)&font_data, NULL))
+   if (!path_is_valid(font_path) || !filestream_read_file(font_path, (void**)&font_data, NULL))
       goto error;
 
    if (!font_renderer_stb_create_atlas(self, font_data, font_size, 512, 512))
@@ -161,12 +166,17 @@ static void *font_renderer_stb_init(const char *font_path, float font_size)
       goto error;
 
    stbtt_GetFontVMetrics(&info, &ascent, &descent, &line_gap);
-   self->line_height  = ascent - descent;
 
-   if (font_size < 0)
-      self->line_height *= stbtt_ScaleForMappingEmToPixels(&info, -font_size);
-   else
-      self->line_height *= stbtt_ScaleForPixelHeight(&info, font_size);
+   scale_factor = (font_size < 0) ?
+         stbtt_ScaleForMappingEmToPixels(&info, -font_size) :
+         stbtt_ScaleForPixelHeight(&info, font_size);
+
+   /* Ascender, descender and line_gap values always
+    * end up ~0.5 pixels too small when scaled...
+    * > Add a manual correction factor */
+   self->line_metrics.ascender  = 0.5f + (float)ascent * scale_factor;
+   self->line_metrics.descender = 0.5f + (float)(-descent) * scale_factor;
+   self->line_metrics.height    = 0.5f + (float)(ascent - descent + line_gap) * scale_factor;
 
    free(font_data);
 
@@ -184,7 +194,7 @@ error:
 static const char *font_renderer_stb_get_default_font(void)
 {
    static const char *paths[] = {
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(__WINRT__)
       "C:\\Windows\\Fonts\\consola.ttf",
       "C:\\Windows\\Fonts\\verdana.ttf",
 #elif defined(__APPLE__)
@@ -205,31 +215,35 @@ static const char *font_renderer_stb_get_default_font(void)
       "vs0:data/external/font/pvf/k006004ds.ttf",
       "vs0:data/external/font/pvf/n023055ms.ttf",
       "vs0:data/external/font/pvf/n023055ts.ttf",
-#else
+#elif !defined(__WINRT__)
       "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
       "/usr/share/fonts/TTF/DejaVuSans.ttf",
       "/usr/share/fonts/truetype/ttf-dejavu/DejaVuSansMono.ttf",
       "/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf",
       "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
       "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-#endif
       "osd-font.ttf",
+#endif
       NULL
    };
 
    const char **p;
 
    for (p = paths; *p; ++p)
-      if (filestream_exists(*p))
+      if (path_is_valid(*p))
          return *p;
 
    return NULL;
 }
 
-static int font_renderer_stb_get_line_height(void* data)
+static bool font_renderer_stb_get_line_metrics(
+      void* data, struct font_line_metrics **metrics)
 {
    stb_font_renderer_t *handle = (stb_font_renderer_t*)data;
-   return handle->line_height;
+   if (!handle)
+      return false;
+   *metrics = &handle->line_metrics;
+   return true;
 }
 
 font_renderer_driver_t stb_font_renderer = {
@@ -239,5 +253,5 @@ font_renderer_driver_t stb_font_renderer = {
    font_renderer_stb_free,
    font_renderer_stb_get_default_font,
    "stb",
-   font_renderer_stb_get_line_height,
+   font_renderer_stb_get_line_metrics
 };

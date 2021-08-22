@@ -46,6 +46,28 @@ enum setting_type
    ST_END_SUB_GROUP
 };
 
+enum ui_setting_type
+{
+   ST_UI_TYPE_NONE = 0,
+   ST_UI_TYPE_CHECKBOX,
+   ST_UI_TYPE_UINT_COLOR_BUTTON,
+   ST_UI_TYPE_UINT_SPINBOX,
+   ST_UI_TYPE_UINT_COMBOBOX,
+   ST_UI_TYPE_UINT_RADIO_BUTTONS,
+   ST_UI_TYPE_FLOAT_COLOR_BUTTON,
+   ST_UI_TYPE_FLOAT_SPINBOX,
+   ST_UI_TYPE_FLOAT_SLIDER_AND_SPINBOX,
+   ST_UI_TYPE_SIZE_SPINBOX,
+   ST_UI_TYPE_BIND_BUTTON,
+   ST_UI_TYPE_DIRECTORY_SELECTOR,
+   ST_UI_TYPE_FILE_SELECTOR,
+   ST_UI_TYPE_FONT_SELECTOR,
+   ST_UI_TYPE_STRING_COMBOBOX,
+   ST_UI_TYPE_STRING_LINE_EDIT,
+   ST_UI_TYPE_PASSWORD_LINE_EDIT,
+   ST_UI_TYPE_LAST
+};
+
 enum setting_flags
 {
    SD_FLAG_NONE           = 0,
@@ -70,18 +92,17 @@ enum settings_free_flags
 };
 
 typedef struct rarch_setting rarch_setting_t;
-typedef struct rarch_setting_info rarch_setting_info_t;
 typedef struct rarch_setting_group_info rarch_setting_group_info_t;
 
-typedef void (*change_handler_t               )(rarch_setting_t *data);
-typedef int  (*action_left_handler_t          )(rarch_setting_t *data, bool wraparound);
-typedef int  (*action_right_handler_t         )(rarch_setting_t *setting, bool wraparound);
+typedef void (*change_handler_t               )(rarch_setting_t *setting);
+typedef int  (*action_left_handler_t          )(rarch_setting_t *setting, size_t idx, bool wraparound);
+typedef int  (*action_right_handler_t         )(rarch_setting_t *setting, size_t idx, bool wraparound);
 typedef int  (*action_up_handler_t            )(rarch_setting_t *setting);
 typedef int  (*action_down_handler_t          )(rarch_setting_t *setting);
 typedef int  (*action_start_handler_t         )(rarch_setting_t *setting);
 typedef int  (*action_cancel_handler_t        )(rarch_setting_t *setting);
-typedef int  (*action_ok_handler_t            )(rarch_setting_t *setting, bool wraparound);
-typedef int  (*action_select_handler_t        )(rarch_setting_t *setting, bool wraparound);
+typedef int  (*action_ok_handler_t            )(rarch_setting_t *setting, size_t idx, bool wraparound);
+typedef int  (*action_select_handler_t        )(rarch_setting_t *setting, size_t idx, bool wraparound);
 typedef void (*get_string_representation_t    )(rarch_setting_t *setting, char *s, size_t len);
 
 struct rarch_setting_group_info
@@ -91,30 +112,21 @@ struct rarch_setting_group_info
 
 struct rarch_setting
 {
-   enum setting_type    browser_selection_type;
-   enum msg_hash_enums  enum_idx;
-   enum msg_hash_enums  enum_value_idx;
-   enum setting_type    type;
-
-   bool                 dont_use_enum_idx_representation;
-   bool                 enforce_minrange;
-   bool                 enforce_maxrange;
-
-   uint8_t              index;
-   uint32_t             index_offset;
-   int16_t               offset_by;
-
-   unsigned             bind_type;
-   uint32_t             size;
-
-   float                step;
+   double               min;
+   double               max;
 
    uint64_t             flags;
    uint64_t             free_flags;
 
-   double               min;
-   double               max;
-
+   struct
+   {
+      const char     *off_label;
+      const char     *on_label;
+   } boolean;
+   struct
+   {
+      const char     *empty_path;
+   } dir;
    const char           *rounding_fraction;
    const char           *name;
    const char           *short_description;
@@ -135,17 +147,6 @@ struct rarch_setting
    action_select_handler_t       action_select;
    get_string_representation_t   get_string_representation;
 
-   union
-   {
-      bool                       boolean;
-      const char                 *string;
-      int                        integer;
-      unsigned int               unsigned_integer;
-      float                      fraction;
-      const struct retro_keybind *keybind;
-      size_t                     sizet;
-   } default_value;
-
    struct
    {
       union
@@ -160,248 +161,47 @@ struct rarch_setting
       } target;
    } value;
 
+
    union
    {
-      bool           boolean;
+      const char                 *string;
+      const struct retro_keybind *keybind;
+      size_t                     sizet;
+      int                        integer;
+      unsigned int               unsigned_integer;
+      float                      fraction;
+      bool                       boolean;
+   } default_value;
+
+   union
+   {
+      size_t         sizet;
       int            integer;
       unsigned int   unsigned_integer;
       float          fraction;
-      size_t         sizet;
+      bool           boolean;
    } original_value;
 
-   struct
-   {
-      const char     *empty_path;
-   } dir;
+   uint32_t             index_offset;
+   uint32_t             size;
+   unsigned             bind_type;
+   float                step;
 
-   struct
-   {
-      enum           event_command idx;
-      bool           triggered;
-   } cmd_trigger;
+   enum event_command   cmd_trigger_idx;
+   enum ui_setting_type ui_type;
+   enum setting_type    browser_selection_type;
+   enum msg_hash_enums  enum_idx;
+   enum msg_hash_enums  enum_value_idx;
+   enum setting_type    type;
 
-   struct
-   {
-      const char     *off_label;
-      const char     *on_label;
-   } boolean;
+   int16_t              offset_by;
+   uint8_t              index;
+
+   bool                 cmd_trigger_event_triggered;
+   bool                 dont_use_enum_idx_representation;
+   bool                 enforce_minrange;
+   bool                 enforce_maxrange;
 };
-
-struct rarch_setting_info
-{
-   int index;
-   int size;
-};
-
-bool START_GROUP(rarch_setting_t **list, rarch_setting_info_t *list_info,
-      rarch_setting_group_info_t *group_info,
-      const char *name, const char *parent_group);
-
-bool END_GROUP(rarch_setting_t **list, rarch_setting_info_t *list_info,
-      const char *parent_group);
-
-bool START_SUB_GROUP(rarch_setting_t **list,
-      rarch_setting_info_t *list_info, const char *name,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group);
-
-bool END_SUB_GROUP(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      const char *parent_group);
-
-bool CONFIG_ACTION_ALT(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      const char *name, const char *SHORT,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group);
-
-bool CONFIG_ACTION(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group);
-
-bool CONFIG_BOOL_ALT(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      bool *target,
-      const char *name, const char *SHORT,
-      bool default_value,
-      enum msg_hash_enums off_enum_idx,
-      enum msg_hash_enums on_enum_idx,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler,
-      change_handler_t read_handler,
-      uint32_t flags);
-
-bool CONFIG_BOOL(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      bool *target,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      bool default_value,
-      enum msg_hash_enums off_enum_idx,
-      enum msg_hash_enums on_enum_idx,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler,
-      change_handler_t read_handler,
-      uint32_t flags);
-
-bool CONFIG_INT(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      int *target,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      int default_value,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler, change_handler_t read_handler);
-
-bool CONFIG_UINT_ALT(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      unsigned int *target,
-      const char *name, const char *SHORT,
-      unsigned int default_value,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler, change_handler_t read_handler);
-
-bool CONFIG_UINT(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      unsigned int *target,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      unsigned int default_value,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler, change_handler_t read_handler);
-
-bool CONFIG_SIZE(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      size_t *target,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      size_t default_value,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler, change_handler_t read_handler,
-	  get_string_representation_t string_representation_handler);
-
-bool CONFIG_FLOAT(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      float *target,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      float default_value, const char *rounding,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler, change_handler_t read_handler);
-
-bool CONFIG_PATH(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      char *target, size_t len,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      const char *default_value,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler, change_handler_t read_handler);
-
-bool CONFIG_DIR(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      char *target, size_t len,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      const char *default_value,
-      enum msg_hash_enums empty_enum_idx,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler, change_handler_t read_handler);
-
-bool CONFIG_STRING(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      char *target, size_t len,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      const char *default_value,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler, change_handler_t read_handler);
-
-bool CONFIG_STRING_OPTIONS(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      char *target, size_t len,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      const char *default_value, const char *values,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler, change_handler_t read_handler);
-
-bool CONFIG_HEX(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      unsigned int *target,
-      enum msg_hash_enums name_enum_idx,
-      enum msg_hash_enums SHORT_enum_idx,
-      unsigned int default_value,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group,
-      change_handler_t change_handler, change_handler_t read_handler);
-
-/* Please strdup() NAME and SHORT */
-bool CONFIG_BIND(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      struct retro_keybind *target,
-      uint32_t player, uint32_t player_offset,
-      const char *name, const char *SHORT,
-      const struct retro_keybind *default_value,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group);
-
-bool CONFIG_BIND_ALT(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      struct retro_keybind *target,
-      uint32_t player, uint32_t player_offset,
-      const char *name, const char *SHORT,
-      const struct retro_keybind *default_value,
-      rarch_setting_group_info_t *group_info,
-      rarch_setting_group_info_t *subgroup_info,
-      const char *parent_group);
 
 /**
  * setting_set_with_string_representation:
@@ -418,35 +218,20 @@ unsigned setting_get_bind_type(rarch_setting_t *setting);
 
 int setting_string_action_start_generic(rarch_setting_t *setting);
 
-int setting_generic_action_ok_default(rarch_setting_t *setting, bool wraparound);
+int setting_generic_action_ok_default(rarch_setting_t *setting, size_t idx, bool wraparound);
 
 int setting_generic_action_start_default(rarch_setting_t *setting);
-
-void settings_data_list_current_add_flags(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      unsigned values);
-
-void settings_data_list_current_add_free_flags(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      unsigned values);
 
 void setting_get_string_representation_size_in_mb(rarch_setting_t *setting,
       char *s, size_t len);
 
-int setting_uint_action_right_with_refresh(rarch_setting_t *setting, bool wraparound);
+int setting_uint_action_left_with_refresh(rarch_setting_t *setting, size_t idx, bool wraparound);
+int setting_uint_action_right_with_refresh(rarch_setting_t *setting, size_t idx, bool wraparound);
+int setting_uint_action_left_default(rarch_setting_t *setting, size_t idx, bool wraparound);
+int setting_uint_action_right_default(rarch_setting_t *setting, size_t idx, bool wraparound);
 
-int setting_uint_action_left_with_refresh(rarch_setting_t *setting, bool wraparound) ;
-
-void setting_get_string_representation_uint_as_enum(rarch_setting_t *setting,
-      char *s, size_t len);
-
-int setting_uint_action_left_default(rarch_setting_t *setting, bool wraparound);
-int setting_uint_action_right_default(rarch_setting_t *setting, bool wraparound);
 void setting_get_string_representation_uint(rarch_setting_t *setting, char *s, size_t len);
 void setting_get_string_representation_hex_and_uint(rarch_setting_t *setting, char *s, size_t len);
-#define setting_get_type(setting) ((setting) ? setting->type : ST_NONE)
 
 RETRO_END_DECLS
 

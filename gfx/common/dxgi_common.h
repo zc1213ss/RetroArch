@@ -260,6 +260,19 @@ static INLINE ULONG Release(void* object)
 #endif
 #endif
 
+#if !defined(__cplusplus) || defined(CINTERFACE)
+#ifndef COM_ADDREF_DECLARED
+#define COM_ADDREF_DECLARED
+static INLINE ULONG AddRef(void* object)
+{
+   if (object)
+      return ((IUnknown*)object)->lpVtbl->AddRef((IUnknown*)object);
+
+   return 0;
+}
+#endif
+#endif
+
 /* auto-generated */
 
 typedef IDXGIObject*            DXGIObject;
@@ -635,10 +648,9 @@ static INLINE ULONG DXGIReleaseSwapChain(DXGISwapChain swap_chain)
 {
    return swap_chain->lpVtbl->Release(swap_chain);
 }
-static INLINE HRESULT DXGIPresent(DXGISwapChain swap_chain, UINT sync_interval, UINT flags)
-{
-   return swap_chain->lpVtbl->Present(swap_chain, sync_interval, flags);
-}
+
+#define DXGIPresent(swap_chain, sync_interval, flags) ((swap_chain)->lpVtbl->Present((swap_chain), (UINT)(sync_interval), flags))
+
 static INLINE HRESULT DXGIGetBuffer(DXGISwapChain swap_chain, UINT buffer, IDXGISurface** out)
 {
    return swap_chain->lpVtbl->GetBuffer(swap_chain, buffer, uuidof(IDXGISurface), (void**)out);
@@ -653,17 +665,9 @@ DXGIGetFullscreenState(DXGISwapChain swap_chain, BOOL* fullscreen, DXGIOutput* t
 {
    return swap_chain->lpVtbl->GetFullscreenState(swap_chain, fullscreen, target);
 }
-static INLINE HRESULT DXGIResizeBuffers(
-      DXGISwapChain swap_chain,
-      UINT          buffer_count,
-      UINT          width,
-      UINT          height,
-      DXGI_FORMAT   new_format,
-      UINT          swap_chain_flags)
-{
-   return swap_chain->lpVtbl->ResizeBuffers(
-         swap_chain, buffer_count, width, height, new_format, swap_chain_flags);
-}
+
+#define DXGIResizeBuffers(swap_chain, buffer_count, width, height, new_format, swap_chain_flags) ((swap_chain)->lpVtbl->ResizeBuffers((swap_chain), buffer_count, width, height, new_format, swap_chain_flags))
+
 static INLINE HRESULT
 DXGIResizeTarget(DXGISwapChain swap_chain, DXGI_MODE_DESC* new_target_parameters)
 {
@@ -786,7 +790,7 @@ static INLINE HRESULT DXGICreateFactory2(DXGIFactory2* factory)
 
 /* internal */
 
-#include "../video_driver.h"
+#include "../../retroarch.h"
 #include "../drivers_shader/glslang_util.h"
 
 #define DXGI_COLOR_RGBA(r, g, b, a) (((UINT32)(a) << 24) | ((UINT32)(b) << 16) | ((UINT32)(g) << 8) | ((UINT32)(r) << 0))
@@ -817,30 +821,6 @@ void dxgi_copy(
       int         dst_pitch,
       void*       dst_data);
 
-void dxgi_update_title(video_frame_info_t* video_info);
-
 DXGI_FORMAT glslang_format_to_dxgi(glslang_format fmt);
 
 RETRO_END_DECLS
-
-#if 1
-#include "../../performance_counters.h"
-
-#ifndef PERF_START
-#define PERF_START() \
-   { \
-   static struct retro_perf_counter perfcounter = { __FUNCTION__ }; \
-   LARGE_INTEGER                    start, stop; \
-   rarch_perf_register(&perfcounter); \
-   perfcounter.call_cnt++; \
-   QueryPerformanceCounter(&start)
-
-#define PERF_STOP() \
-   QueryPerformanceCounter(&stop); \
-   perfcounter.total += stop.QuadPart - start.QuadPart; \
-   }
-#endif
-#else
-#define PERF_START()
-#define PERF_STOP()
-#endif

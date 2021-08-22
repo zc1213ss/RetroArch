@@ -13,287 +13,292 @@
  */
 
 #include <stdint.h>
-
-#include "../frontend_driver.h"
-
-#include <io_common.h>
-#include <loadfile.h>
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h>
+#include <kernel.h>
+
 #include <sbv_patches.h>
 #include <sifrpc.h>
 #include <iopcontrol.h>
+#include <ps2_devices.h>
+#include <ps2_irx_variables.h>
+#include <loadfile.h>
+#include <elf-loader.h>
 #include <libpwroff.h>
-#include <audsrv.h>
-#include <libpad.h>
 
-enum BootDeviceIDs{
-    BOOT_DEVICE_UNKNOWN = -1,
-    BOOT_DEVICE_MC0 = 0,
-    BOOT_DEVICE_MC1,
-    BOOT_DEVICE_CDROM,
-    BOOT_DEVICE_MASS,
-    BOOT_DEVICE_HDD,
-    BOOT_DEVICE_HOST,
-    
-    BOOT_DEVICE_COUNT,
-};
+#define NEWLIB_PORT_AWARE
+#include <fileXio_rpc.h>
+#include <fileio.h>
+#include <hdd-ioctl.h>
 
-extern unsigned char poweroff_irx_start[];
-extern unsigned int poweroff_irx_size;
+#if defined(SCREEN_DEBUG)
+#include <debug.h>
+#endif
 
-extern unsigned char ps2dev9_irx_start[];
-extern unsigned int ps2dev9_irx_size;
+#include <file/file_path.h>
+#include <string/stdstring.h>
 
-extern unsigned char ps2atad_irx_start[];
-extern unsigned int ps2atad_irx_size;
+#include "../frontend_driver.h"
+#include "../../defaults.h"
+#include "../../file_path_special.h"
+#include "../../verbosity.h"
+#include "../../paths.h"
 
-extern unsigned char ps2hdd_irx_start[];
-extern unsigned int ps2hdd_irx_size;
-
-extern unsigned char ps2fs_irx_start[];
-extern unsigned int ps2fs_irx_size;
-
-extern unsigned char iomanX_irx_start[];
-extern unsigned int iomanX_irx_size;
-
-extern unsigned char fileXio_irx_start[];
-extern unsigned int fileXio_irx_size;
-
-extern unsigned char freesd_irx_start[];
-extern unsigned int freesd_irx_size;
-
-extern unsigned char audsrv_irx_start[];
-extern unsigned int audsrv_irx_size;
-
-extern unsigned char usbd_irx_start[];
-extern unsigned int usbd_irx_size;
-
-extern unsigned char usbhdfsd_irx_start[];
-extern unsigned int usbhdfsd_irx_size;
-
-extern unsigned char mcman_irx_start[];
-extern unsigned int mcman_irx_size;
-
-extern unsigned char mcserv_irx_start[];
-extern unsigned int mcserv_irx_size;
-
-static unsigned char HDDModulesLoaded=0;
-
-char eboot_path[512];
-char user_path[512];
+#if defined(DEBUG)
+#define DEFAULT_PARTITION "hdd0:__common:pfs"
+#endif
 
 static enum frontend_fork ps2_fork_mode = FRONTEND_FORK_NONE;
-
-/* Only paths residing on "basic" devices 
- * (devices that don't require mounting) 
- * can be specified here, since this system 
- * doesn't perform mounting based on the path.
- */
-#define DEFAULT_PATH    "mass:"
-
-static int getBootDeviceID(char *path)
-{
-   if (!strncmp(path, "mc0:", 4))
-      return BOOT_DEVICE_MC0;
-   else if (!strncmp(path, "mc1:", 4))
-      return BOOT_DEVICE_MC1;
-   else if (!strncmp(path, "cdrom0:", 7))
-      return BOOT_DEVICE_CDROM;
-   else if (!strncmp(path, "mass:", 5) || !strncmp(path, "mass0:", 6))
-      return BOOT_DEVICE_MASS;
-   else if (!strncmp(path, "hdd:", 4) || !strncmp(path, "hdd0:", 5))
-      return BOOT_DEVICE_HDD;
-   else if (!strncmp(path, "host", 4) && ((path[4]>='0' && path[4]<='9') || path[4]==':'))
-      return BOOT_DEVICE_HOST;
-   else
-      return BOOT_DEVICE_UNKNOWN;
-
-   return BOOT_DEVICE_HOST;
-}
-
-/* HACK! If booting from a USB device, keep trying to 
- * open this program again until it succeeds. 
- *
- * This will ensure that the emulator will be able to load its files.
- */
-
-static void waitUntilDeviceIsReady(const char *path)
-{
-   FILE *file;
-
-   while((file=fopen(path, "rb"))==NULL)
-   {
-      /* Wait for a while first, or the IOP 
-       * will get swamped by requests from the EE. */
-      nopdelay();
-      nopdelay();
-      nopdelay();
-      nopdelay();
-      nopdelay();
-      nopdelay();
-      nopdelay();
-      nopdelay();
-   };
-
-   fclose(file);
-}
-
-void setPWDOnPFS(const char *FullCWD_path)
-{
-   int i;
-   char *path=NULL;
-   for (i=strlen(FullCWD_path); i>=0; i--)
-   {
-      /* Try to seperate the CWD from the path to this ELF. */
-      if (FullCWD_path[i]==':')
-      {
-         if ((path=malloc(i+6+2))!=NULL)
-         {
-            strcpy(path, "pfs0:/");
-            strncat(path, FullCWD_path, i+1);
-            path[i+1+6]='\0';
-         }
-         break;
-      }
-      else if ((FullCWD_path[i]=='\\')||(FullCWD_path[i]=='/'))
-      {
-         if ((path=malloc(i+6+1))!=NULL)
-         {
-            strcpy(path, "pfs0:/");
-            strncat(path, FullCWD_path, i);
-            path[i+6]='\0';
-         }
-         break;
-      }
-   }
-
-   if (path!=NULL)
-   {
-      chdir(path);
-      free(path);
-   }
-}
-
-static const char *getMountParams(const char *command, char *BlockDevice)
-{
-   int BlockDeviceNameLen;
-   const char *MountPath=NULL;
-
-   if (strlen(command)>6 && (MountPath=strchr(&command[5], ':'))!=NULL)
-   {
-      BlockDeviceNameLen=(unsigned int)MountPath-(unsigned int)command;
-      strncpy(BlockDevice, command, BlockDeviceNameLen);
-      BlockDevice[BlockDeviceNameLen]='\0';
-
-      MountPath++;    /* This is the location of the mount path; */
-   }
-
-   return MountPath;
-}
+static char cwd[FILENAME_MAX];
+static char mountString[10];
+static char mountPoint[50];
+static int hddMounted = 0;
+static int pfsModuleLoaded = 0;
 
 static void create_path_names(void)
 {
+   char user_path[FILENAME_MAX];
 
-   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CORE], g_defaults.dirs[DEFAULT_DIR_PORT],
-         "CORES", sizeof(g_defaults.dirs[DEFAULT_DIR_CORE]));
-   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CORE_INFO], g_defaults.dirs[DEFAULT_DIR_PORT],
-         "INFO", sizeof(g_defaults.dirs[DEFAULT_DIR_CORE_INFO]));
+   snprintf(user_path, sizeof(user_path), "%sretroarch", cwd);
+   fill_pathname_basedir(g_defaults.dirs[DEFAULT_DIR_PORT], cwd, sizeof(g_defaults.dirs[DEFAULT_DIR_PORT]));
+
+   /* Content in the same folder */
+
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CORE], cwd,
+         "cores", sizeof(g_defaults.dirs[DEFAULT_DIR_CORE]));
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CORE_INFO], cwd,
+         "info", sizeof(g_defaults.dirs[DEFAULT_DIR_CORE_INFO]));
 
    /* user data */
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_ASSETS], user_path,
+         "assets", sizeof(g_defaults.dirs[DEFAULT_DIR_ASSETS]));
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_DATABASE], user_path,
+         "database/rdb", sizeof(g_defaults.dirs[DEFAULT_DIR_DATABASE]));
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CURSOR], user_path,
+         "database/cursors", sizeof(g_defaults.dirs[DEFAULT_DIR_CURSOR]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CHEATS], user_path,
-         "CHEATS", sizeof(g_defaults.dirs[DEFAULT_DIR_CHEATS]));
+         "cheats", sizeof(g_defaults.dirs[DEFAULT_DIR_CHEATS]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_MENU_CONFIG], user_path,
-         "CONFIG", sizeof(g_defaults.dirs[DEFAULT_DIR_MENU_CONFIG]));
+         "config", sizeof(g_defaults.dirs[DEFAULT_DIR_MENU_CONFIG]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CORE_ASSETS], user_path,
-         "DOWNLOADS", sizeof(g_defaults.dirs[DEFAULT_DIR_CORE_ASSETS]));
+         "downloads", sizeof(g_defaults.dirs[DEFAULT_DIR_CORE_ASSETS]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_PLAYLIST], user_path,
-         "PLAYLISTS", sizeof(g_defaults.dirs[DEFAULT_DIR_PLAYLIST]));
-   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_REMAP], g_defaults.dirs[DEFAULT_DIR_MENU_CONFIG],
-         "REMAPS", sizeof(g_defaults.dirs[DEFAULT_DIR_REMAP]));
+         "playlists", sizeof(g_defaults.dirs[DEFAULT_DIR_PLAYLIST]));
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_REMAP], user_path,
+         "remaps", sizeof(g_defaults.dirs[DEFAULT_DIR_REMAP]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_SRAM], user_path,
-         "SAVEFILES", sizeof(g_defaults.dirs[DEFAULT_DIR_SRAM]));
+         "savefiles", sizeof(g_defaults.dirs[DEFAULT_DIR_SRAM]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_SAVESTATE], user_path,
-         "SAVESTATES", sizeof(g_defaults.dirs[DEFAULT_DIR_SAVESTATE]));
-   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_SCREENSHOT], user_path,
-         "SCREENSHOTS", sizeof(g_defaults.dirs[DEFAULT_DIR_SCREENSHOT]));
+         "savestates", sizeof(g_defaults.dirs[DEFAULT_DIR_SAVESTATE]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_SYSTEM], user_path,
-         "SYSTEM", sizeof(g_defaults.dirs[DEFAULT_DIR_SYSTEM]));
-
-   /* cache dir */
+         "system", sizeof(g_defaults.dirs[DEFAULT_DIR_SYSTEM]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CACHE], user_path,
-         "TEMP", sizeof(g_defaults.dirs[DEFAULT_DIR_CACHE]));
+         "temp", sizeof(g_defaults.dirs[DEFAULT_DIR_CACHE]));
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_OVERLAY], user_path,
+         "overlays", sizeof(g_defaults.dirs[DEFAULT_DIR_OVERLAY]));
+#ifdef HAVE_VIDEO_LAYOUT
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_VIDEO_LAYOUT], user_path,
+         "layouts", sizeof(g_defaults.dirs[DEFAULT_DIR_VIDEO_LAYOUT]));
+#endif
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_THUMBNAILS], user_path,
+         "thumbnails", sizeof(g_defaults.dirs[DEFAULT_DIR_THUMBNAILS]));
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_LOGS], user_path,
+         "logs", sizeof(g_defaults.dirs[DEFAULT_DIR_LOGS]));
 
    /* history and main config */
    strlcpy(g_defaults.dirs[DEFAULT_DIR_CONTENT_HISTORY],
          user_path, sizeof(g_defaults.dirs[DEFAULT_DIR_CONTENT_HISTORY]));
-   fill_pathname_join(g_defaults.path.config, user_path,
-         file_path_str(FILE_PATH_MAIN_CONFIG), sizeof(g_defaults.path.config));
+   fill_pathname_join(g_defaults.path_config, user_path,
+         FILE_PATH_MAIN_CONFIG, sizeof(g_defaults.path_config));
+
+#ifndef IS_SALAMANDER
+   dir_check_defaults("custom.ini");
+#endif
 }
 
-static void poweroffCallback(void *arg)
+static void reset_IOP()
 {
-#if 0
-	/* Close all files and unmount all partitions. */
-	close(fd);
-
-	/* If you use PFS, close all files and unmount all partitions. */
-	fileXioDevctl("pfs:", PDIOC_CLOSEALL, NULL, 0, NULL, 0)
-
-	/* Shut down DEV9, if you used it. */
-	while(fileXioDevctl("dev9x:", DDIOC_OFF, NULL, 0, NULL, 0) < 0){};
+   SifInitRpc(0);
+#if !defined(DEBUG) || defined(BUILD_FOR_PCSX2)
+   /* Comment this line if you don't wanna debug the output */
+   while(!SifIopReset(NULL, 0)){};
 #endif
 
-	printf("Shutdown!");
-	poweroffShutdown();
+   while(!SifIopSync()){};
+   SifInitRpc(0);
+   sbv_patch_enable_lmb();
+   sbv_patch_disable_prefix_check();
 }
 
-static void frontend_ps2_get_environment_settings(int *argc, char *argv[],
+static int hddCheck(void)
+{
+    int ret;
+
+    ret = fileXioDevctl("hdd0:", HDIOC_STATUS, NULL, 0, NULL, 0);
+
+    // 0 = HDD connected and formatted, 1 = not formatted, 2 = HDD not usable, 3 = HDD not connected.
+    if ((ret >= 3) || (ret < 0))
+        return -1;
+
+    return ret;
+}
+
+static void load_hdd_modules() 
+{
+   pfsModuleLoaded = 0;
+   int ret;
+   char hddarg[] = "-o" "\0" "4" "\0" "-n" "\0" "20";
+   
+   ret = SifExecModuleBuffer(&ps2dev9_irx, size_ps2dev9_irx, 0, NULL, NULL);
+
+   ret = SifExecModuleBuffer(&ps2atad_irx, size_ps2atad_irx, 0, NULL, NULL);
+   if (ret < 0) 
+   {
+      RARCH_WARN("HDD: No HardDisk Drive detected.\n");
+      return;
+   }
+
+   ret = SifExecModuleBuffer(&ps2hdd_irx, size_ps2hdd_irx, sizeof(hddarg), hddarg, NULL);
+   if (ret < 0) 
+   {
+      RARCH_WARN("HDD: No HardDisk Drive detected.\n");
+      return;
+   }
+
+   // Check if a HDD unit is connected
+   if (hddCheck() < 0) {
+      RARCH_WARN("HDD: No HardDisk Drive detected.\n");
+      return;
+   }
+
+   ret = SifExecModuleBuffer(&ps2fs_irx, size_ps2fs_irx, 0, NULL, NULL);
+   if (ret < 0) {
+      RARCH_WARN("HDD: HardDisk Drive not formatted (PFS).\n");
+      return;
+   }
+
+   RARCH_LOG("HDDSUPPORT modules loaded\n");
+   pfsModuleLoaded = 1;
+}
+
+static void load_modules() 
+{
+   /* I/O Files */
+   SifExecModuleBuffer(&iomanX_irx, size_iomanX_irx, 0, NULL, NULL);
+   SifExecModuleBuffer(&fileXio_irx, size_fileXio_irx, 0, NULL, NULL);
+   SifExecModuleBuffer(&sio2man_irx, size_sio2man_irx, 0, NULL, NULL);
+   fileXioInitSkipOverride();
+
+   /* Memory Card */
+   SifExecModuleBuffer(&mcman_irx, size_mcman_irx, 0, NULL, NULL);
+   SifExecModuleBuffer(&mcserv_irx, size_mcserv_irx, 0, NULL, NULL);
+
+   /* USB */
+   SifExecModuleBuffer(&usbd_irx, size_usbd_irx, 0, NULL, NULL);
+   SifExecModuleBuffer(&bdm_irx, size_bdm_irx, 0, NULL, NULL);
+   SifExecModuleBuffer(&bdmfs_vfat_irx, size_bdmfs_vfat_irx, 0, NULL, NULL);
+   SifExecModuleBuffer(&usbmass_bd_irx, size_usbmass_bd_irx, 0, NULL, NULL);
+
+   /* Power off */
+   SifExecModuleBuffer(&poweroff_irx, size_poweroff_irx, 0, NULL, NULL);
+
+   /* HDD */
+   load_hdd_modules();
+#if !defined(DEBUG)
+   /* CDFS */
+   SifExecModuleBuffer(&cdfs_irx, size_cdfs_irx, 0, NULL, NULL);
+#endif
+
+#ifndef IS_SALAMANDER
+   /* Controllers */
+   SifExecModuleBuffer(&mtapman_irx, size_mtapman_irx, 0, NULL, NULL);
+   SifExecModuleBuffer(&padman_irx, size_padman_irx, 0, NULL, NULL);
+
+   /* Audio */
+   SifExecModuleBuffer(&libsd_irx, size_libsd_irx, 0, NULL, NULL);
+   SifExecModuleBuffer(&audsrv_irx, size_audsrv_irx, 0, NULL, NULL);
+#endif
+}
+
+static int mount_hdd_partition() {
+   char mountPath[FILENAME_MAX];
+   char newCWD[FILENAME_MAX];
+   int shouldMount = 0;
+
+   int bootDeviceID = getBootDeviceID(cwd);
+   /* Try to mount HDD partition, either from cwd or default one */
+   if (bootDeviceID == BOOT_DEVICE_HDD || bootDeviceID == BOOT_DEVICE_HDD0)
+   {
+      shouldMount = 1;
+      strlcpy(mountPath, cwd, sizeof(mountPath));
+   } 
+#if !defined(IS_SALAMANDER) && defined(DEBUG)
+   else 
+   {
+      // Even if we're booting from USB, try to mount default partition
+      strcpy(mountPath, DEFAULT_PARTITION);
+      shouldMount = 1;
+   }
+#endif
+
+   if (!shouldMount)
+      return 0;
+
+   if (getMountInfo(mountPath, mountString, mountPoint, newCWD) != 1) 
+   {
+      RARCH_WARN("Partition info not readed\n");
+      return 0;
+   } 
+   
+   if (fileXioMount(mountString, mountPoint, FIO_MT_RDWR) < 0) 
+   {
+      RARCH_WARN("Error mount mounting partition %s, %s\n", mountString, mountPoint);
+      return 0;
+   } 
+   
+   if (bootDeviceID == BOOT_DEVICE_HDD || bootDeviceID == BOOT_DEVICE_HDD0)
+   {
+      // If we're booting from HDD, we must update the cwd variable and add : to the mount point
+      sprintf(cwd, "%s", newCWD);
+      strcat(mountPoint, ":");
+   } else {
+      // we MUST put mountPoint as empty to avoid wrong results with LoadELFFromFileWithPartition
+      strcpy(mountPoint, "");
+   }
+
+   return 1;
+}
+
+static void prepare_for_exit(void) 
+{
+   if (hddMounted) 
+   {
+      fileXioUmount(mountString);
+      fileXioDevctl(mountString, PDIOC_CLOSEALL, NULL, 0, NULL, 0);
+      fileXioDevctl("hdd0:", HDIOC_IDLEIMM, NULL, 0, NULL, 0);
+   }
+
+   if (pfsModuleLoaded)
+      fileXioDevctl("dev9x:", DDIOC_OFF, NULL, 0, NULL, 0);
+}
+
+static void poweroffHandler(void *arg)
+{
+   prepare_for_exit();
+   poweroffShutdown();
+}
+
+static void frontend_ps2_get_env(int *argc, char *argv[],
       void *args, void *params_data)
 {
-   char cwd[FILENAME_MAX], blockDevice[16];
-   const char *mountPoint;
-   int bootDeviceID;
-
-   getcwd(cwd, sizeof(cwd));
-   bootDeviceID=getBootDeviceID(cwd);
-
-   /* Mount the HDD partition, if required. */
-   if (bootDeviceID==BOOT_DEVICE_HDD)
-   {
-      /* Try not to adjust this unless you know what you are doing. The tricky part i keeping the NULL character in the middle of that argument list separated from the number 4. */
-      static const char PS2HDD_args[]="-o\0""2";
-      static const char PS2FS_args[]="-o\0""8";
-
-      if (!HDDModulesLoaded)
-      {
-         SifExecModuleBuffer(poweroff_irx_start, poweroff_irx_size, 0, NULL, NULL);
-         SifExecModuleBuffer(ps2dev9_irx_start, ps2dev9_irx_size, 0, NULL, NULL);
-         SifExecModuleBuffer(ps2atad_irx_start, ps2atad_irx_size, 0, NULL, NULL);
-         SifExecModuleBuffer(ps2hdd_irx_start, ps2hdd_irx_size, sizeof(PS2HDD_args), PS2HDD_args, NULL);
-         SifExecModuleBuffer(ps2fs_irx_start, ps2fs_irx_size, sizeof(PS2FS_args), PS2FS_args, NULL);
-         HDDModulesLoaded=1;
-      }
-
-      /* Attempt to mount the partition. */
-      if ((mountPoint=getMountParams(cwd, blockDevice))!=NULL && !strncmp(mountPoint, "pfs:", 4))
-      {
-         fileXioMount("pfs0:", blockDevice, FIO_MT_RDWR);
-
-         setPWDOnPFS(&mountPoint[4]);
-      }
-   }
-   else if (bootDeviceID==BOOT_DEVICE_CDROM)
-      chdir(DEFAULT_PATH);
-   else if (bootDeviceID==BOOT_DEVICE_MASS)
-      waitUntilDeviceIsReady(argv[0]);
-   else if (bootDeviceID==BOOT_DEVICE_UNKNOWN) { }
-
+   int i;
    create_path_names();
 
 #ifndef IS_SALAMANDER
    if (!string_is_empty(argv[1]))
    {
-      static char path[PATH_MAX_LENGTH] = {0};
+      static char path[FILENAME_MAX] = {0};
       struct rarch_main_wrap      *args =
          (struct rarch_main_wrap*)params_data;
 
@@ -312,114 +317,92 @@ static void frontend_ps2_get_environment_settings(int *argc, char *argv[],
 
          RARCH_LOG("argv[0]: %s\n", argv[0]);
          RARCH_LOG("argv[1]: %s\n", argv[1]);
-         RARCH_LOG("argv[2]: %s\n", argv[2]);
 
          RARCH_LOG("Auto-start game %s.\n", argv[1]);
       }
    }
 #endif
-   int i;
-   for (i = 0; i < DEFAULT_DIR_LAST; i++)
-   {
-      const char *dir_path = g_defaults.dirs[i];
-      if (!string_is_empty(dir_path))
-         path_mkdir(dir_path);
-   }
 
+#ifndef IS_SALAMANDER
+   dir_check_defaults("custom.ini");
+#endif
 }
 
 static void frontend_ps2_init(void *data)
 {
-   SifInitRpc(0);
-#if !defined(DEBUG)
-   /* Comment this line if you don't wanna debug the output */
-   while(!SifIopReset(NULL, 0)){};
+   reset_IOP();
+#if defined(SCREEN_DEBUG)
+   init_scr();
+   scr_printf("\n\nStarting RetroArch...\n");
 #endif
+   load_modules();
 
-   while(!SifIopSync()){};
-   SifInitRpc(0);
-   sbv_patch_enable_lmb();
+   poweroffInit();
+   poweroffSetCallback(&poweroffHandler, NULL);
 
-   /* Controllers */
-   SifLoadModule("rom0:SIO2MAN", 0, NULL);
-   SifLoadModule("rom0:PADMAN", 0, NULL);
 
-   /* I/O Files */
-   SifExecModuleBuffer(iomanX_irx_start, iomanX_irx_size, 0, NULL, NULL);
-   SifExecModuleBuffer(fileXio_irx_start, fileXio_irx_size, 0, NULL, NULL);
-
-   /* Memory Card */
-   SifExecModuleBuffer(mcman_irx_start, mcman_irx_size, 0, NULL, NULL);
-   SifExecModuleBuffer(mcserv_irx_start, mcserv_irx_size, 0, NULL, NULL);
-   
-   /* USB */
-   SifExecModuleBuffer(usbd_irx_start, usbd_irx_size, 0, NULL, NULL);
-   SifExecModuleBuffer(usbhdfsd_irx_start, usbhdfsd_irx_size, 0, NULL, NULL);
-
-   /* Audio */
-   SifExecModuleBuffer(freesd_irx_start, freesd_irx_size, 0, NULL, NULL);
-   SifExecModuleBuffer(audsrv_irx_start, audsrv_irx_size, 0, NULL, NULL);
-
+#ifndef IS_SALAMANDER
    /* Initializes audsrv library */
-   if (audsrv_init()) {
+   if (audsrv_init())
+   {
       RARCH_ERR("audsrv library not initalizated\n");
    }
 
-   /* Initializes pad library 
-      Must be init with 0 as parameter*/
-   if (padInit(0) != 1) {
+   /* Initializes pad un multitap libraries */
+   if (mtapInit() != 1)
+   {
+      RARCH_ERR("mtapInit library not initalizated\n");
+   }
+   if (padInit(0) != 1)
+   {
       RARCH_ERR("padInit library not initalizated\n");
    }
+#endif
 
-#if defined(HAVE_FILE_LOGGER)
-   retro_main_log_file_init("retroarch.log");
-   verbosity_enable();
+   getcwd(cwd, sizeof(cwd));
+#if !defined(IS_SALAMANDER) && !defined(DEBUG)
+   // If it is not salamander we need to go one level up for set the CWD.
+   path_parent_dir(cwd);
+#endif
+   if (pfsModuleLoaded)
+      hddMounted = mount_hdd_partition();
+
+#if !defined(DEBUG)
+   waitUntilDeviceIsReady(cwd);
 #endif
 }
 
 static void frontend_ps2_deinit(void *data)
 {
-   (void)data;
 #ifndef IS_SALAMANDER
-   verbosity_disable();
-#ifdef HAVE_FILE_LOGGER
-   command_event(CMD_EVENT_LOG_FILE_DEINIT, NULL);
+   if (ps2_fork_mode == FRONTEND_FORK_NONE)
+      prepare_for_exit();
+
+   if (audsrv_quit())
+   {
+      RARCH_ERR("audsrv library not deinitalizated\n");
+   }
+
+   if (padEnd() != 1)
+   {
+      RARCH_ERR("padEnd library not deinitalizated\n");
+   }
 #endif
-
-#endif
-
-   padEnd();
-   audsrv_quit();
-
-   fileXioUmount("pfs0:");
-   fileXioExit();
-
-   SifExitRpc();
 }
 
 static void frontend_ps2_exec(const char *path, bool should_load_game)
 {
-#if defined(IS_SALAMANDER)
-   char argp[512] = {0};
-   SceSize   args = 0;
-
-   strlcpy(argp, eboot_path, sizeof(argp));
-   args = strlen(argp) + 1;
-
+   int args = 0;
+   static char *argv[1];
+   RARCH_LOG("Attempt to load executable: [%s], partition [%s].\n", path, mountPoint);
 #ifndef IS_SALAMANDER
    if (should_load_game && !path_is_empty(RARCH_PATH_CONTENT))
    {
-      argp[args] = '\0';
-      strlcat(argp + args, path_get(RARCH_PATH_CONTENT), sizeof(argp) - args);
-      args += strlen(argp + args) + 1;
+      args++;
+      argv[0] = (char *)path_get(RARCH_PATH_CONTENT);
    }
 #endif
-
-   RARCH_LOG("Attempt to load executable: [%s].\n", path);
-#if 0
-   exitspawn_kernel(path, args, argp); /* I don't know what this is doing */
-#endif
-#endif
+   LoadELFFromFileWithPartition(path, mountPoint, args, argv);
 }
 
 #ifndef IS_SALAMANDER
@@ -450,9 +433,9 @@ static bool frontend_ps2_set_fork(enum frontend_fork fork_mode)
 }
 #endif
 
-static void frontend_ps2_exitspawn(char *core_path, size_t core_path_size)
+static void frontend_ps2_exitspawn(char *s, size_t len, char *args)
 {
-   bool should_load_game = false;
+   bool should_load_content = false;
 #ifndef IS_SALAMANDER
    if (ps2_fork_mode == FRONTEND_FORK_NONE)
       return;
@@ -460,29 +443,19 @@ static void frontend_ps2_exitspawn(char *core_path, size_t core_path_size)
    switch (ps2_fork_mode)
    {
       case FRONTEND_FORK_CORE_WITH_ARGS:
-         should_load_game = true;
+         should_load_content = true;
          break;
       case FRONTEND_FORK_NONE:
       default:
          break;
    }
 #endif
-   frontend_ps2_exec(core_path, should_load_game);
+   frontend_ps2_exec(s, should_load_content);
 }
 
-static void frontend_ps2_shutdown(bool unused)
-{
-   poweroffInit();
-   /* Set callback function */
-	poweroffSetCallback(&poweroffCallback, NULL);
-}
+static int frontend_ps2_get_rating(void) { return 10; }
 
-static int frontend_ps2_get_rating(void)
-{
-    return 10;
-}
-
-enum frontend_architecture frontend_ps2_get_architecture(void)
+enum frontend_architecture frontend_ps2_get_arch(void)
 {
     return FRONTEND_ARCH_MIPS;
 }
@@ -490,74 +463,95 @@ enum frontend_architecture frontend_ps2_get_architecture(void)
 static int frontend_ps2_parse_drive_list(void *data, bool load_content)
 {
 #ifndef IS_SALAMANDER
+   char hdd[10];
    file_list_t *list = (file_list_t*)data;
    enum msg_hash_enums enum_idx = load_content ?
       MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR :
-      MSG_UNKNOWN;
+      MENU_ENUM_LABEL_FILE_BROWSER_DIRECTORY;
 
    menu_entries_append_enum(list,
-         "mc0:/",
+         rootDevicePath(BOOT_DEVICE_MC0),
          msg_hash_to_str(MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR),
          enum_idx,
          FILE_TYPE_DIRECTORY, 0, 0);
    menu_entries_append_enum(list,
-         "mc1:/",
+         rootDevicePath(BOOT_DEVICE_MC1),
          msg_hash_to_str(MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR),
          enum_idx,
          FILE_TYPE_DIRECTORY, 0, 0);
    menu_entries_append_enum(list,
-         "mass:/",
+         rootDevicePath(BOOT_DEVICE_CDFS),
          msg_hash_to_str(MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR),
          enum_idx,
          FILE_TYPE_DIRECTORY, 0, 0);
    menu_entries_append_enum(list,
-         "hdd0:/",
+         rootDevicePath(BOOT_DEVICE_MASS),
          msg_hash_to_str(MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR),
          enum_idx,
          FILE_TYPE_DIRECTORY, 0, 0);
+   if (hddMounted) 
+   {
+      sprintf(hdd, "%s/", mountString);
+      menu_entries_append_enum(list,
+            hdd,
+            msg_hash_to_str(MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR),
+            enum_idx,
+            FILE_TYPE_DIRECTORY, 0, 0);
+   }
+   menu_entries_append_enum(list,
+         rootDevicePath(BOOT_DEVICE_HOST),
+         msg_hash_to_str(MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR),
+         enum_idx,
+         FILE_TYPE_DIRECTORY, 0, 0);
+#if defined(DEBUG) && !defined(BUILD_FOR_PCSX2)
    menu_entries_append_enum(list,
          "host:",
          msg_hash_to_str(MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR),
          enum_idx,
          FILE_TYPE_DIRECTORY, 0, 0);
 #endif
+#endif
 
    return 0;
 }
 
 frontend_ctx_driver_t frontend_ctx_ps2 = {
-   frontend_ps2_get_environment_settings,                         /* environment_get */
-   frontend_ps2_init,                         /* init */
-   frontend_ps2_deinit,                         /* deinit */
-   frontend_ps2_exitspawn,                         /* exitspawn */
+   frontend_ps2_get_env,         /* get_env */
+   frontend_ps2_init,            /* init */
+   frontend_ps2_deinit,          /* deinit */
+   frontend_ps2_exitspawn,       /* exitspawn */
    NULL,                         /* process_args */
-   frontend_ps2_exec,                         /* exec */
-   #ifdef IS_SALAMANDER
+   frontend_ps2_exec,            /* exec */
+#ifdef IS_SALAMANDER
    NULL,                         /* set_fork */
 #else
-   frontend_ps2_set_fork,                         /* set_fork */
+   frontend_ps2_set_fork,        /* set_fork */
 #endif
-   frontend_ps2_shutdown,                         /* shutdown */
+   NULL,                         /* shutdown */
    NULL,                         /* get_name */
    NULL,                         /* get_os */
-   frontend_ps2_get_rating,                         /* get_rating */
+   frontend_ps2_get_rating,      /* get_rating */
    NULL,                         /* load_content */
-   frontend_ps2_get_architecture,                         /* get_architecture */
+   frontend_ps2_get_arch,        /* get_architecture */
    NULL,                         /* get_powerstate */
-   frontend_ps2_parse_drive_list,                         /* parse_drive_list */
-   NULL,                         /* get_mem_total */
-   NULL,                         /* get_mem_free */
+   frontend_ps2_parse_drive_list,/* parse_drive_list */
+   NULL,                         /* get_total_mem */
+   NULL,                         /* get_free_mem */
    NULL,                         /* install_signal_handler */
    NULL,                         /* get_sighandler_state */
    NULL,                         /* set_sighandler_state */
    NULL,                         /* destroy_sighandler_state */
    NULL,                         /* attach_console */
    NULL,                         /* detach_console */
-#ifdef HAVE_LAKKA
    NULL,                         /* get_lakka_version */
-#endif
+   NULL,                         /* set_screen_brightness */
    NULL,                         /* watch_path_for_changes */
    NULL,                         /* check_for_path_changes */
    NULL,                         /* set_sustained_performance_mode */
-   "null",
+   NULL,                         /* get_cpu_model_name */
+   NULL,                         /* get_user_language */
+   NULL,                         /* is_narrator_running */
+   NULL,                         /* accessibility_speak */
+   "ps2",                        /* ident */
+   NULL                          /* get_video_driver */
 };

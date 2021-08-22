@@ -8,9 +8,14 @@
 *.dol
 *.map
 *.swp
+*.cache
+*.gcda
+*.gcno
 .tmp
 .tmp.c
 .tmp.cxx
+.moc.h
+.moc.cpp
 config.log
 /.project
 /.externalToolBuilders/
@@ -31,6 +36,7 @@ Release
 ipch
 *.user
 /bootstrap/gx/wii/app_booter/app_booter.bin
+/wii/app_booter/app_booter.bin
 *.zip
 RetroArch-w32/
 RetroArch-w64/
@@ -53,7 +59,6 @@ DerivedData
 apple/tmp
 apple/*.mobileprovision
 apple/RetroArch_iOS.xcodeproj/project.xcworkspace/*
-menu/driverspzarch.c
 /Cg/
 /GL/
 /SDL/
@@ -61,12 +66,12 @@ menu/driverspzarch.c
 /freetype2/
 /ft2build.h
 /iconv.h
-/libxml2/
 /phoenix/
 /python/
 /rsound.h
 .pc
 /media/shaders_glsl/
+/media/shaders_slang/
 /obj-w32/
 .cproject
 .settings
@@ -74,6 +79,32 @@ libretro-super
 run.sh
 convert_rumble.awk
 *~
+assets
+info
+content_favorites.lpl
+content_history.lpl
+content_image_history.lpl
+content_music_history.lpl
+content_video_history.lpl
+saves
+screenshots
+autoconfig
+config
+database
+overlays
+playlists
+states
+shaders/shaders_cg
+shaders/shaders_glsl
+shaders/shaders_slang
+
+# Qt Creator
+*.cflags
+*.cxxflags
+*.creator*
+*.config
+*.files
+*.includes
 
 # Wii U
 *.depend
@@ -84,7 +115,6 @@ wiiu/wut/elf2rpl/elf2rpl
 /pkg/wiiu/wiiu
 /pkg/wiiu/rpx
 /wiiu-devel.properties
-
 
 # 3ds
 /.lst
@@ -110,6 +140,10 @@ wiiu/wut/elf2rpl/elf2rpl
 /pkg/android/phoenix/bin/
 /pkg/android/phoenix/gen/
 /pkg/android/phoenix/local.properties
+/pkg/android/phoenix/gradle.properties
+/pkg/android/phoenix/.gradle
+/pkg/android/phoenix/.externalNativeBuild
+/pkg/android/phoenix/build
 
 # Cloned by libretro-fetch.sh
 /media/assets/
@@ -119,7 +153,6 @@ wiiu/wut/elf2rpl/elf2rpl
 /media/libretrodb/
 
 pkg/apple/iOS/build/
-pkg/apple/iOS/modules/
 pkg/apple/build/
 ui/drivers/qt/moc_*
 ui/drivers/moc_*
@@ -164,6 +197,10 @@ retroarch_switch.nacp
 retroarch_switch.nro
 retroarch_switch.nso
 
+# PS2
+ps2/irx/*.c
+*.irx
+
 # Wayland
 gfx/common/wayland/idle-inhibit-unstable-v1.c
 gfx/common/wayland/idle-inhibit-unstable-v1.h
@@ -173,3 +210,18 @@ gfx/common/wayland/xdg-decoration-unstable-v1.h
 gfx/common/wayland/xdg-decoration-unstable-v1.c
 gfx/common/wayland/xdg-shell.c
 gfx/common/wayland/xdg-shell.h
+
+# libretro-common samples
+libretro-common/samples/streams/rzip/rzip
+
+# DINGUX
+*.opk
+
+#VITA
+param.sfo
+*.wo
+*.elf
+*.self
+*.vpk
+/.vs
+/deps/SPIRV-Cross/out/build/x64-Debug

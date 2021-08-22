@@ -4,9 +4,17 @@
 #include <QDialog>
 #include <QPointer>
 
+#include <retro_common_api.h>
+
+#ifndef CXX_BUILD
 extern "C" {
-#include "../.././gfx/video_shader_parse.h"
+#endif
+
+#include "../../../gfx/video_shader_parse.h"
+
+#ifndef CXX_BUILD
 }
+#endif
 
 class QCloseEvent;
 class QResizeEvent;
@@ -48,6 +56,9 @@ private slots:
    void onShaderPassMoveUpClicked();
    void onShaderResetPass(int pass);
    void onShaderResetAllPasses();
+   void onShaderRemovePass(int pass);
+   void onShaderRemoveAllPassesClicked();
+   void onShaderRemovePassClicked();
    void onShaderResetParameter(QString parameter);
    void onShaderLoadPresetClicked();
    void onShaderAddPassClicked();
@@ -55,19 +66,27 @@ private slots:
    void onShaderSaveCorePresetClicked();
    void onShaderSaveParentPresetClicked();
    void onShaderSaveGamePresetClicked();
-   void onShaderClearAllPassesClicked();
-   void onShaderRemovePassClicked();
+   void onShaderSaveGlobalPresetClicked();
+   void onShaderRemoveCorePresetClicked();
+   void onShaderRemoveParentPresetClicked();
+   void onShaderRemoveGamePresetClicked();
+   void onShaderRemoveGlobalPresetClicked();
    void onShaderApplyClicked();
+   void updateRemovePresetButtonsState();
    void clearLayout();
    void buildLayout();
 private:
    QString getFilterLabel(unsigned filter);
    void addShaderParam(struct video_shader_parameter *param, QFormLayout *form);
    void getShaders(struct video_shader **menu_shader, struct video_shader **video_shader);
-   void saveShaderPreset(const char *path, unsigned action_type);
+   void operateShaderPreset(bool save, const char *path, unsigned action_type);
 
    QPointer<QVBoxLayout> m_layout;
    QPointer<QScrollArea> m_scrollArea;
+   QAction *removeGlobalPresetAction;
+   QAction *removeCorePresetAction;
+   QAction *removeParentPresetAction;
+   QAction *removeGamePresetAction;
 protected:
    void closeEvent(QCloseEvent *event);
    void resizeEvent(QResizeEvent *event);

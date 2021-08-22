@@ -24,6 +24,8 @@
 #include <retro_common_api.h>
 #include <lists/string_list.h>
 
+#include <libretro.h>
+
 RETRO_BEGIN_DECLS
 
 enum frontend_powerstate
@@ -79,7 +81,7 @@ typedef struct frontend_ctx_driver
    environment_get_t environment_get;
    void (*init)(void *data);
    void (*deinit)(void *data);
-   void (*exitspawn)(char *s, size_t len);
+   void (*exitspawn)(char *s, size_t len, char *args);
 
    process_args_t process_args;
    void (*exec)(const char *, bool);
@@ -93,19 +95,24 @@ typedef struct frontend_ctx_driver
    enum frontend_powerstate (*get_powerstate)(int *seconds, int *percent);
    int  (*parse_drive_list)(void*, bool);
    uint64_t (*get_total_mem)(void);
-   uint64_t (*get_used_mem)(void);
+   uint64_t (*get_free_mem)(void);
    void (*install_signal_handler)(void);
    int (*get_signal_handler_state)(void);
    void (*set_signal_handler_state)(int value);
    void (*destroy_signal_handler_state)(void);
    void (*attach_console)(void);
    void (*detach_console)(void);
-#ifdef HAVE_LAKKA
    void (*get_lakka_version)(char *, size_t);
-#endif
+   /* TODO/FIXME: Need to implement some sort of startup brightness setting. */
+   void (*set_screen_brightness)(int);
    void (*watch_path_for_changes)(struct string_list *list, int flags, path_change_data_t **change_data);
    bool (*check_for_path_changes)(path_change_data_t *change_data);
    void (*set_sustained_performance_mode)(bool on);
+   const char* (*get_cpu_model_name)(void);
+   enum retro_language (*get_user_language)(void);
+   bool (*is_narrator_running)(void);
+   bool (*accessibility_speak)(int speed,
+         const char* speak_text, int priority);
 
    const char *ident;
 
@@ -130,7 +137,6 @@ extern frontend_ctx_driver_t frontend_ctx_emscripten;
 extern frontend_ctx_driver_t frontend_ctx_dos;
 extern frontend_ctx_driver_t frontend_ctx_switch;
 extern frontend_ctx_driver_t frontend_ctx_orbis;
-extern frontend_ctx_driver_t frontend_ctx_null;
 
 /**
  * frontend_ctx_find_driver:
@@ -169,6 +175,9 @@ void frontend_driver_free(void);
 
 enum frontend_architecture frontend_driver_get_cpu_architecture(void);
 
+const void *frontend_driver_get_cpu_architecture_str(
+      char *frontend_architecture, size_t size);
+
 environment_get_t frontend_driver_environment_get_ptr(void);
 
 bool frontend_driver_has_get_video_driver_func(void);
@@ -179,7 +188,7 @@ void frontend_driver_shutdown(bool a);
 
 void frontend_driver_deinit(void *args);
 
-void frontend_driver_exitspawn(char *s, size_t len);
+void frontend_driver_exitspawn(char *s, size_t len, char *args);
 
 bool frontend_driver_has_fork(void);
 
@@ -189,7 +198,7 @@ bool frontend_driver_get_salamander_basename(char *s, size_t len);
 
 uint64_t frontend_driver_get_total_memory(void);
 
-uint64_t frontend_driver_get_used_memory(void);
+uint64_t frontend_driver_get_free_memory(void);
 
 void frontend_driver_install_signal_handler(void);
 
@@ -203,6 +212,10 @@ void frontend_driver_attach_console(void);
 
 void frontend_driver_detach_console(void);
 
+void frontend_driver_set_screen_brightness(int value);
+
+bool frontend_driver_can_set_screen_brightness(void);
+
 bool frontend_driver_can_watch_for_changes(void);
 
 void frontend_driver_watch_path_for_changes(struct string_list *list, int flags, path_change_data_t **change_data);
@@ -210,6 +223,10 @@ void frontend_driver_watch_path_for_changes(struct string_list *list, int flags,
 bool frontend_driver_check_for_path_changes(path_change_data_t *change_data);
 
 void frontend_driver_set_sustained_performance_mode(bool on);
+
+const char* frontend_driver_get_cpu_model_name(void);
+
+enum retro_language frontend_driver_get_user_language(void);
 
 RETRO_END_DECLS
 

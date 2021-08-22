@@ -1,4 +1,4 @@
-/* Copyright  (C) 2016-2018 The RetroArch team
+/* Copyright  (C) 2016-2020 The RetroArch team
  *
  * ---------------------------------------------------------------------------------------
  * The following license statement only applies to this file (net_natt.c).
@@ -47,7 +47,13 @@ static struct UPNPUrls urls;
 static struct IGDdatas data;
 #endif
 
-void natt_init(void)
+/*
+      natt_open_port_any(ntsd->nat_traversal_state,
+            ntsd->port, SOCKET_PROTOCOL_TCP);
+*/
+
+void natt_init(struct natt_status *status,
+      uint16_t port, enum socket_protocol proto)
 {
 #ifndef HAVE_SOCKET_LEGACY
 #if HAVE_MINIUPNPC
@@ -56,8 +62,6 @@ void natt_init(void)
    char * descXML;
    int descXMLsize = 0;
    int upnperror = 0;
-   memset(&urls, 0, sizeof(struct UPNPUrls));
-   memset(&data, 0, sizeof(struct IGDdatas));
    devlist = upnpDiscover(2000, NULL, NULL, 0, 0, 2, &upnperror);
    if (devlist)
    {
@@ -65,22 +69,27 @@ void natt_init(void)
       while (dev)
       {
          if (strstr (dev->st, "InternetGatewayDevice"))
-            break;
+         {
+            memset(&urls, 0, sizeof(struct UPNPUrls));
+            memset(&data, 0, sizeof(struct IGDdatas));
+            descXML = (char *) miniwget(dev->descURL, &descXMLsize, 0, NULL);
+            if (descXML)
+            {
+               parserootdesc(descXML, descXMLsize, &data);
+               free (descXML);
+               descXML = 0;
+
+               GetUPNPUrls (&urls, &data, dev->descURL, 0);
+            }
+            if(natt_open_port_any(status, port, proto))
+               goto end;
+
+         }
          dev = dev->pNext;
       }
-      if (!dev)
-         dev = devlist;
-
-      descXML = (char *) miniwget(dev->descURL, &descXMLsize, 0, NULL);
-      if (descXML)
-      {
-         parserootdesc(descXML, descXMLsize, &data);
-         free (descXML);
-         descXML = 0;
-         GetUPNPUrls (&urls, &data, dev->descURL, 0);
-      }
-      freeUPNPDevlist(devlist);
    }
+end:
+   freeUPNPDevlist(devlist);
 #endif
 #endif
 }
@@ -91,10 +100,7 @@ bool natt_new(struct natt_status *status)
    return true;
 }
 
-void natt_free(struct natt_status *status)
-{
-   /* Nothing */
-}
+void natt_free(struct natt_status *status) { }
 
 static bool natt_open_port(struct natt_status *status,
       struct sockaddr *addr, socklen_t addrlen, enum socket_protocol proto)
@@ -203,7 +209,7 @@ bool natt_open_port_any(struct natt_status *status,
       struct net_ifinfo_entry *entry = list.entries + i;
 
       /* ignore localhost */
-      if (  string_is_equal(entry->host, "127.0.0.1") || 
+      if (  string_is_equal(entry->host, "127.0.0.1") ||
             string_is_equal(entry->host, "::1"))
          continue;
 
@@ -233,7 +239,7 @@ bool natt_read(struct natt_status *status)
 }
 
 #if 0
-/* If we want to remove redirects in the future, this is a 
+/* If we want to remove redirects in the future, this is a
  * sample of how to do that. */
 
 void upnp_rem_redir (int port)

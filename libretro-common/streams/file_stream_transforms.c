@@ -1,4 +1,4 @@
-/* Copyright  (C) 2010-2018 The RetroArch team
+/* Copyright  (C) 2010-2020 The RetroArch team
 *
 * ---------------------------------------------------------------------------------------
 * The following license statement only applies to this file (file_stream_transforms.c).
@@ -37,7 +37,7 @@ RFILE* rfopen(const char *path, const char *mode)
       retro_mode = RETRO_VFS_FILE_ACCESS_READ;
       if (strstr(mode, "+"))
       {
-         retro_mode = RETRO_VFS_FILE_ACCESS_READ_WRITE | 
+         retro_mode = RETRO_VFS_FILE_ACCESS_READ_WRITE |
             RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING;
       }
    }
@@ -49,12 +49,12 @@ RFILE* rfopen(const char *path, const char *mode)
    }
    else if (strstr(mode, "a"))
    {
-      retro_mode = RETRO_VFS_FILE_ACCESS_WRITE | 
+      retro_mode = RETRO_VFS_FILE_ACCESS_WRITE |
          RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING;
       position_to_end = true;
       if (strstr(mode, "+"))
       {
-         retro_mode = RETRO_VFS_FILE_ACCESS_READ_WRITE | 
+         retro_mode = RETRO_VFS_FILE_ACCESS_READ_WRITE |
             RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING;
       }
    }
@@ -99,7 +99,7 @@ int64_t rfseek(RFILE* stream, int64_t offset, int origin)
 int64_t rfread(void* buffer,
    size_t elem_size, size_t elem_count, RFILE* stream)
 {
-   return filestream_read(stream, buffer, elem_size * elem_count);
+   return (filestream_read(stream, buffer, elem_size * elem_count) / elem_size);
 }
 
 char *rfgets(char *buffer, int maxCount, RFILE* stream)

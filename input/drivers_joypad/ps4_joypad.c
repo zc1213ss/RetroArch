@@ -31,29 +31,31 @@
 #define SCE_USER_SERVICE_USER_ID_INVALID 0xFFFFFFFF
 #define SCE_ORBISPAD_ERROR_ALREADY_OPENED 0x80920004
 
-#define	ORBISPAD_L3		0x00000002
-#define	ORBISPAD_R3		0x00000004
-#define	ORBISPAD_OPTIONS	0x00000008
-#define	ORBISPAD_UP		0x00000010
-#define	ORBISPAD_RIGHT		0x00000020
-#define	ORBISPAD_DOWN		0x00000040
-#define	ORBISPAD_LEFT		0x00000080
-#define	ORBISPAD_L2		0x00000100
-#define	ORBISPAD_R2		0x00000200
-#define	ORBISPAD_L1		0x00000400
-#define	ORBISPAD_R1		0x00000800
-#define	ORBISPAD_TRIANGLE	0x00001000
+#define	ORBISPAD_L3		      0x00000002
+#define	ORBISPAD_R3		      0x00000004
+#define	ORBISPAD_OPTIONS	   0x00000008
+#define	ORBISPAD_UP		      0x00000010
+#define	ORBISPAD_RIGHT		   0x00000020
+#define	ORBISPAD_DOWN		   0x00000040
+#define	ORBISPAD_LEFT		   0x00000080
+#define	ORBISPAD_L2		      0x00000100
+#define	ORBISPAD_R2		      0x00000200
+#define	ORBISPAD_L1		      0x00000400
+#define	ORBISPAD_R1		      0x00000800
+#define	ORBISPAD_TRIANGLE	   0x00001000
 #define	ORBISPAD_CIRCLE		0x00002000
-#define	ORBISPAD_CROSS		0x00004000
+#define	ORBISPAD_CROSS		   0x00004000
 #define	ORBISPAD_SQUARE		0x00008000
 #define	ORBISPAD_TOUCH_PAD	0x00100000
 #define	ORBISPAD_INTERCEPTED	0x80000000
 
-typedef struct SceUserServiceLoginUserIdList {
-	int32_t userId[SCE_USER_SERVICE_MAX_LOGIN_USERS];
+typedef struct SceUserServiceLoginUserIdList
+{
+   int32_t userId[SCE_USER_SERVICE_MAX_LOGIN_USERS];
 } SceUserServiceLoginUserIdList;
 
-int sceUserServiceGetLoginUserIdList(SceUserServiceLoginUserIdList* userIdList);
+int sceUserServiceGetLoginUserIdList(
+      SceUserServiceLoginUserIdList* userIdList);
 
 /*
  * Global var's
@@ -65,39 +67,41 @@ typedef struct
    bool connected;
 } ds_joypad_state;
 
+/* TODO/FIXME - static globals */
 static ds_joypad_state ds_joypad_states[PS4_MAX_ORBISPADS];
 static uint64_t pad_state[PS4_MAX_ORBISPADS];
 static int16_t analog_state[PS4_MAX_ORBISPADS][2][2];
 static int16_t num_players = 0;
-
 
 static const char *ps4_joypad_name(unsigned pad)
 {
    return "PS4 Controller";
 }
 
-static bool ps4_joypad_init(void *data)
+static void *ps4_joypad_init(void *data)
 {
+   int result;
+   SceUserServiceLoginUserIdList userIdList;
+
    num_players = 0;
 
    scePadInit();
 
-   SceUserServiceLoginUserIdList userIdList;
+	result = sceUserServiceGetLoginUserIdList(&userIdList);
 
-	int result = sceUserServiceGetLoginUserIdList(&userIdList);
-   RARCH_LOG("sceUserServiceGetLoginUserIdList %x ", result);
 	if (result == 0)
 	{
-
-      for (int i = 0; i < SCE_USER_SERVICE_MAX_LOGIN_USERS; i++)
+      unsigned i;
+      for (i = 0; i < SCE_USER_SERVICE_MAX_LOGIN_USERS; i++)
       {
          SceUserServiceUserId userId = userIdList.userId[i];
-         RARCH_LOG("USER %d ID %x\n", i, userId);
+
          if (userId != SCE_USER_SERVICE_USER_ID_INVALID)
          {
             int index = 0;
 
-            while(index < num_players){
+            while (index < num_players)
+            {
                ds_joypad_states[index].userId = userId;
                index++;
             }
@@ -105,23 +109,20 @@ static bool ps4_joypad_init(void *data)
             if (index == num_players)
             {
                ds_joypad_states[num_players].handle = scePadOpen(userId, 0, 0, NULL);
-               RARCH_LOG("USER %x HANDLE %x\n", userId, ds_joypad_states[num_players].handle);
-               if (ds_joypad_states[num_players].handle > 0){
+               if (ds_joypad_states[num_players].handle > 0)
+               {
                   ds_joypad_states[num_players].connected = true;
                   ds_joypad_states[num_players].userId = userId;
-                  RARCH_LOG("NEW PAD: num_players %x \n", num_players);
 
-                  bool auto_configure = input_autoconfigure_connect( ps4_joypad_name(num_players),
-                                                         NULL,
-                                                         ps4_joypad.ident,
-                                                         num_players,
-                                                         0,
-                                                         0);
-                  if (!auto_configure) {
-                     input_config_set_device_name(num_players, ps4_joypad_name(num_players));
-                  }
+                  input_autoconfigure_connect(
+                        ps4_joypad_name(num_players),
+                        NULL,
+                        ps4_joypad.ident,
+                        num_players,
+                        0,
+                        0);
                   num_players++;
-         		}
+               }
             }
          }
 
@@ -129,14 +130,47 @@ static bool ps4_joypad_init(void *data)
 
    }
 
-   return true;
+   return (void*)-1;
 }
 
-static bool ps4_joypad_button(unsigned port_num, uint16_t joykey)
+static int32_t ps4_joypad_button(unsigned port, uint16_t joykey)
 {
-   if (port_num >= PS4_MAX_ORBISPADS)
-      return false;
-   return (pad_state[port_num] & (UINT64_C(1) << joykey));
+   if (port >= PS4_MAX_ORBISPADS)
+      return 0;
+   return pad_state[port] & (UINT64_C(1) << joykey);
+}
+
+static int16_t ps4_joypad_axis(unsigned port, uint32_t joyaxis)
+{
+   /* TODO/FIXME - implement */
+   return 0;
+}
+
+static int16_t ps4_joypad_state(
+      rarch_joypad_info_t *joypad_info,
+      const struct retro_keybind *binds,
+      unsigned port)
+{
+   unsigned i;
+   int16_t ret                          = 0;
+   uint16_t port_idx                    = joypad_info->joy_idx;
+
+   if (port_idx >= PS4_MAX_ORBISPADS)
+      return 0;
+
+   for (i = 0; i < RARCH_FIRST_CUSTOM_BIND; i++)
+   {
+      /* Auto-binds are per joypad, not per user. */
+      const uint64_t joykey  = (binds[i].joykey != NO_BTN)
+         ? binds[i].joykey  : joypad_info->auto_binds[i].joykey;
+      if (
+               (uint16_t)joykey != NO_BTN 
+            && pad_state[port_idx] & (UINT64_C(1) << (uint16_t)joykey)
+         )
+         ret |= ( 1 << i);
+   }
+
+   return ret;
 }
 
 static void ps4_joypad_get_buttons(unsigned port_num, input_bits_t *state)
@@ -147,11 +181,6 @@ static void ps4_joypad_get_buttons(unsigned port_num, input_bits_t *state)
 	}
    else
       BIT256_CLEAR_ALL_PTR(state);
-}
-
-static int16_t ps4_joypad_axis(unsigned port_num, uint32_t joyaxis)
-{
-   return 0;
 }
 
 static void ps4_joypad_poll(void)
@@ -165,8 +194,8 @@ static void ps4_joypad_poll(void)
       unsigned j, k;
       unsigned i  = player;
       unsigned p  = player;
-   
-      int ret = scePadReadState(ds_joypad_states[player].handle,&buttons);
+      int ret     = scePadReadState(ds_joypad_states[player].handle,&buttons);
+
       if (ret == 0)
       {
          int32_t state_tmp = buttons.buttons;
@@ -199,21 +228,16 @@ static bool ps4_joypad_query_pad(unsigned pad)
 }
 
 static bool ps4_joypad_rumble(unsigned pad,
-      enum retro_rumble_effect effect, uint16_t strength)
-{
-   return false;
-}
+      enum retro_rumble_effect effect, uint16_t strength) { return false; }
 
-
-static void ps4_joypad_destroy(void)
-{
-}
+static void ps4_joypad_destroy(void) { }
 
 input_device_driver_t ps4_joypad = {
    ps4_joypad_init,
    ps4_joypad_query_pad,
    ps4_joypad_destroy,
    ps4_joypad_button,
+   ps4_joypad_state,
    ps4_joypad_get_buttons,
    ps4_joypad_axis,
    ps4_joypad_poll,

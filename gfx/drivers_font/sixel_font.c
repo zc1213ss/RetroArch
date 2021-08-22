@@ -1,7 +1,7 @@
 /*  RetroArch - A frontend for libretro.
  *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  *  Copyright (C) 2011-2017 - Daniel De Matteis
- *  Copyright (C) 2016-2018 - Brad Parker
+ *  Copyright (C) 2016-2019 - Brad Parker
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -24,6 +24,7 @@
 #endif
 
 #include "../font_driver.h"
+#include "../../configuration.h"
 #include "../../verbosity.h"
 #include "../common/sixel_common.h"
 
@@ -74,31 +75,36 @@ static const struct font_glyph *sixel_font_get_glyph(
    return NULL;
 }
 
-static void sixel_render_msg(video_frame_info_t *video_info,
-      void *data, const char *msg,
-      const void *userdata)
+static void sixel_render_msg(
+      void *userdata,
+      void *data,
+      const char *msg,
+      const struct font_params *_params)
 {
    float x, y, scale;
    unsigned width, height;
-   unsigned newX, newY;
+   unsigned new_x, new_y;
    unsigned align;
    sixel_raster_t              *font = (sixel_raster_t*)data;
-   const struct font_params *params = (const struct font_params*)userdata;
+   const struct font_params *params  = (const struct font_params*)_params;
+   settings_t *settings              = config_get_ptr();
+   float video_msg_pos_x             = settings->floats.video_msg_pos_x;
+   float video_msg_pos_y             = settings->floats.video_msg_pos_y;
 
    if (!font || string_is_empty(msg))
       return;
 
    if (params)
    {
-      x = params->x;
-      y = params->y;
+      x     = params->x;
+      y     = params->y;
       scale = params->scale;
       align = params->text_align;
    }
    else
    {
-      x = video_info->font_msg_pos_x;
-      y = video_info->font_msg_pos_y;
+      x     = video_msg_pos_x;
+      y     = video_msg_pos_y;
       scale = 1.0f;
       align = TEXT_ALIGN_LEFT;
    }
@@ -108,19 +114,19 @@ static void sixel_render_msg(video_frame_info_t *video_info,
 
    width    = font->sixel->screen_width;
    height   = font->sixel->screen_height;
-   newY     = height - (y * height * scale);
+   new_y    = height - (y * height * scale);
 
    switch (align)
    {
       case TEXT_ALIGN_RIGHT:
-         newX = (x * width * scale) - strlen(msg);
+         new_x = (x * width * scale) - strlen(msg);
          break;
       case TEXT_ALIGN_CENTER:
-         newX = (x * width * scale) - (strlen(msg) / 2);
+         new_x =  (x * width * scale) - (strlen(msg) / 2);
          break;
       case TEXT_ALIGN_LEFT:
       default:
-         newX = x * width * scale;
+         new_x = x * width * scale;
          break;
    }
 
@@ -135,5 +141,6 @@ font_renderer_t sixel_font = {
    sixel_font_get_glyph,       /* get_glyph */
    NULL,                       /* bind_block */
    NULL,                       /* flush */
-   sixel_get_message_width     /* get_message_width */
+   sixel_get_message_width,    /* get_message_width */
+   NULL                        /* get_line_metrics */
 };

@@ -1,6 +1,7 @@
 /*  RetroArch - A frontend for libretro.
  *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  *  Copyright (C) 2011-2017 - Daniel De Matteis
+ *  Copyright (C) 2016-2019 - Brad Parker
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -34,7 +35,7 @@
 #include <retro_common_api.h>
 #include <retro_environment.h>
 #include "../../driver.h"
-#include "../video_driver.h"
+#include "../../retroarch.h"
 
 #ifndef _XBOX
 #include "../../ui/drivers/ui_win32_resource.h"
@@ -46,6 +47,7 @@ RETRO_BEGIN_DECLS
 #if !defined(_XBOX)
 extern unsigned g_win32_resize_width;
 extern unsigned g_win32_resize_height;
+extern float g_win32_refresh_rate;
 extern bool g_win32_inited;
 extern bool g_win32_restore_desktop;
 extern ui_window_win32_t main_window;
@@ -57,11 +59,13 @@ void win32_monitor_info(void *data, void *hm_data, unsigned *mon_id);
 int win32_change_display_settings(const char *str, void *devmode_data,
       unsigned flags);
 
-void create_graphics_context(HWND hwnd, bool *quit);
+void create_wgl_context(HWND hwnd, bool *quit);
+
+void create_vk_context(HWND hwnd, bool *quit);
 
 void create_gdi_context(HWND hwnd, bool *quit);
 
-bool gdi_has_menu_frame(void);
+bool win32_get_video_output(DEVMODE *dm, int mode, size_t len);
 
 #if !defined(__WINRT__)
 bool win32_window_init(WNDCLASSEX *wndclass, bool fullscreen, const char *class_name);
@@ -89,19 +93,22 @@ bool win32_suppress_screensaver(void *data, bool enable);
 bool win32_get_metrics(void *data,
 	enum display_metric_types type, float *value);
 
-void win32_show_cursor(bool state);
+void win32_show_cursor(void *data, bool state);
 
 HWND win32_get_window(void);
 
-bool win32_has_focus(void);
+bool is_running_on_xbox(void);
 
-void win32_check_window(bool *quit,
+bool win32_has_focus(void *data);
+
+void win32_clip_window(bool grab);
+
+void win32_check_window(void *data,
+      bool *quit,
       bool *resize, unsigned *width, unsigned *height);
 
 void win32_set_window(unsigned *width, unsigned *height,
       bool fullscreen, bool windowed_full, void *rect_data);
-
-bool win32_get_video_output(DEVMODE *dm, int mode, size_t len);
 
 void win32_get_video_output_size(
       unsigned *width, unsigned *height);
@@ -118,30 +125,55 @@ void win32_destroy_window(void);
 
 bool win32_taskbar_is_created(void);
 
-void win32_set_taskbar_created(bool created);
-
 float win32_get_refresh_rate(void *data);
 
 #if defined(HAVE_D3D8) || defined(HAVE_D3D9) || defined (HAVE_D3D10) || defined (HAVE_D3D11) || defined (HAVE_D3D12)
-LRESULT CALLBACK WndProcD3D(HWND hwnd, UINT message,
+LRESULT CALLBACK wnd_proc_d3d_dinput(HWND hwnd, UINT message,
+      WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK wnd_proc_d3d_winraw(HWND hwnd, UINT message,
+      WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK wnd_proc_d3d_common(HWND hwnd, UINT message,
       WPARAM wparam, LPARAM lparam);
 #endif
 
-#if defined(HAVE_OPENGL) || defined(HAVE_VULKAN)
-LRESULT CALLBACK WndProcGL(HWND hwnd, UINT message,
+#if defined(HAVE_OPENGL) || defined(HAVE_OPENGL1) || defined(HAVE_OPENGL_CORE)
+LRESULT CALLBACK wnd_proc_wgl_dinput(HWND hwnd, UINT message,
+      WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK wnd_proc_wgl_winraw(HWND hwnd, UINT message,
+      WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK wnd_proc_wgl_common(HWND hwnd, UINT message,
       WPARAM wparam, LPARAM lparam);
 #endif
 
-LRESULT CALLBACK WndProcGDI(HWND hwnd, UINT message,
+#if defined(HAVE_VULKAN)
+LRESULT CALLBACK wnd_proc_vk_dinput(HWND hwnd, UINT message,
+      WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK wnd_proc_vk_winraw(HWND hwnd, UINT message,
+      WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK wnd_proc_vk_common(HWND hwnd, UINT message,
+      WPARAM wparam, LPARAM lparam);
+#endif
+
+LRESULT CALLBACK wnd_proc_gdi_dinput(HWND hwnd, UINT message,
+      WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK wnd_proc_gdi_winraw(HWND hwnd, UINT message,
+      WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK wnd_proc_gdi_common(HWND hwnd, UINT message,
       WPARAM wparam, LPARAM lparam);
 
 #ifdef _XBOX
 BOOL IsIconic(HWND hwnd);
 #endif
 
-LRESULT win32_menu_loop(HWND owner, WPARAM wparam);
-
 bool win32_load_content_from_gui(const char *szFilename);
+
+void win32_setup_pixel_format(HDC hdc, bool supports_gl);
+
+void win32_unset_input_userdata(void);
+
+void win32_set_input_userdata(void *data);
+
+void win32_update_title(void);
 
 RETRO_END_DECLS
 

@@ -22,7 +22,7 @@
 #include <boolean.h>
 #include <compat/strl.h>
 #include <string/stdstring.h>
-#include <rhash.h>
+#include <lrc_hash.h>
 #include <retro_timers.h>
 
 #include "netplay_private.h"
@@ -36,19 +36,50 @@
 #include "../../content.h"
 #include "../../retroarch.h"
 #include "../../version.h"
+#include "../../menu/menu_input.h"
 
-#ifdef HAVE_MENU
-#include "../../menu/widgets/menu_input_dialog.h"
-#endif
+struct nick_buf_s
+{
+   uint32_t cmd[2];
+   char nick[NETPLAY_NICK_LEN];
+};
 
-const uint32_t netplay_magic = 0x52414E50; /* RANP */
+struct password_buf_s
+{
+   uint32_t cmd[2];
+   char password[NETPLAY_PASS_HASH_LEN];
+};
+
+struct info_buf_s
+{
+   uint32_t cmd[2];
+   uint32_t content_crc;
+   char core_name[NETPLAY_NICK_LEN];
+   char core_version[NETPLAY_NICK_LEN];
+};
+
+#define RECV(buf, sz) \
+   recvd = netplay_recv(&connection->recv_packet_buffer, connection->fd, (buf), (sz), false); \
+   if (recvd >= 0 && recvd < (ssize_t) (sz)) \
+   { \
+      netplay_recv_reset(&connection->recv_packet_buffer); \
+      return true; \
+   } \
+   else if (recvd < 0)
+
+#define NETPLAY_MAGIC 0x52414E50 /* RANP */
+
+/* TODO/FIXME - static global variables */
+static netplay_t *handshake_password_netplay = NULL;
+static unsigned long simple_rand_next        = 1;
 
 /* TODO/FIXME - replace netplay_log_connection with calls
  * to inet_ntop_compat and move runloop message queue pushing
  * outside */
-#if !defined(HAVE_SOCKET_LEGACY) && !defined(WIIU)
+#if !defined(HAVE_SOCKET_LEGACY) && !defined(WIIU) && !defined(_3DS)
 /* Custom inet_ntop. Win32 doesn't seem to support this ... */
-void netplay_log_connection(const struct sockaddr_storage *their_addr,
+static void netplay_log_connection(
+      const struct sockaddr_storage *their_addr,
       unsigned slot, const char *nick, char *s, size_t len)
 {
    union
@@ -98,26 +129,21 @@ void netplay_log_connection(const struct sockaddr_storage *their_addr,
    }
 
    if (str)
-   {
       snprintf(s, len, msg_hash_to_str(MSG_GOT_CONNECTION_FROM_NAME),
             nick, str);
-   }
    else
-   {
       snprintf(s, len, msg_hash_to_str(MSG_GOT_CONNECTION_FROM),
             nick);
-   }
 }
-
 #else
-void netplay_log_connection(const struct sockaddr_storage *their_addr,
+static void netplay_log_connection(
+      const struct sockaddr_storage *their_addr,
       unsigned slot, const char *nick, char *s, size_t len)
 {
    /* Stub code - will need to be implemented */
    snprintf(s, len, msg_hash_to_str(MSG_GOT_CONNECTION_FROM),
          nick);
 }
-
 #endif
 
 /**
@@ -126,7 +152,7 @@ void netplay_log_connection(const struct sockaddr_storage *their_addr,
  * A pseudo-hash of the RetroArch and Netplay version, so only compatible
  * versions play together.
  */
-uint32_t netplay_impl_magic(void)
+static uint32_t netplay_impl_magic(void)
 {
    size_t i;
    uint32_t res                        = 0;
@@ -173,12 +199,10 @@ static bool netplay_endian_mismatch(uint32_t pma, uint32_t pmb)
    return (pma & ebit) != (pmb & ebit);
 }
 
-static unsigned long simple_rand_next = 1;
-
 static int simple_rand(void)
 {
    simple_rand_next = simple_rand_next * 1103515245 + 12345;
-   return((unsigned)(simple_rand_next/65536) % 32768);
+   return((unsigned)(simple_rand_next / 65536) % 32768);
 }
 
 static void simple_srand(unsigned int seed)
@@ -206,9 +230,10 @@ bool netplay_handshake_init_send(netplay_t *netplay,
    struct netplay_connection *connection)
 {
    uint32_t header[6];
+   unsigned conn_salt   = 0;
    settings_t *settings = config_get_ptr();
 
-   header[0] = htonl(netplay_magic);
+   header[0] = htonl(NETPLAY_MAGIC);
    header[1] = htonl(netplay_platform_magic());
    header[2] = htonl(NETPLAY_COMPRESSION_SUPPORTED);
    header[3] = 0;
@@ -223,13 +248,12 @@ bool netplay_handshake_init_send(netplay_t *netplay,
       if (simple_rand_next == 1)
          simple_srand((unsigned int) time(NULL));
       connection->salt = simple_rand_uint32();
-      if (connection->salt == 0) connection->salt = 1;
-      header[3] = htonl(connection->salt);
+      if (connection->salt == 0)
+         connection->salt = 1;
+      conn_salt           = connection->salt;
    }
-   else
-   {
-      header[3] = htonl(0);
-   }
+
+   header[3] = htonl(conn_salt);
 
    if (!netplay_send(&connection->send_packet_buffer, connection->fd, header,
          sizeof(header)) ||
@@ -239,44 +263,13 @@ bool netplay_handshake_init_send(netplay_t *netplay,
    return true;
 }
 
-struct nick_buf_s
-{
-   uint32_t cmd[2];
-   char nick[NETPLAY_NICK_LEN];
-};
-
-struct password_buf_s
-{
-   uint32_t cmd[2];
-   char password[NETPLAY_PASS_HASH_LEN];
-};
-
-struct info_buf_s
-{
-   uint32_t cmd[2];
-   char core_name[NETPLAY_NICK_LEN];
-   char core_version[NETPLAY_NICK_LEN];
-   uint32_t content_crc;
-};
-
-#define RECV(buf, sz) \
-   recvd = netplay_recv(&connection->recv_packet_buffer, connection->fd, (buf), (sz), false); \
-   if (recvd >= 0 && recvd < (ssize_t) (sz)) \
-   { \
-      netplay_recv_reset(&connection->recv_packet_buffer); \
-      return true; \
-   } \
-   else if (recvd < 0)
-
-static netplay_t *handshake_password_netplay = NULL;
-
 #ifdef HAVE_MENU
 static void handshake_password(void *ignore, const char *line)
 {
    struct password_buf_s password_buf;
    char password[8+NETPLAY_PASS_LEN]; /* 8 for salt, 128 for password */
    char hash[NETPLAY_PASS_HASH_LEN+1]; /* + NULL terminator */
-   netplay_t *netplay = handshake_password_netplay;
+   netplay_t *netplay                    = handshake_password_netplay;
    struct netplay_connection *connection = &netplay->connections[0];
 
    snprintf(password, sizeof(password), "%08X", connection->salt);
@@ -294,7 +287,7 @@ static void handshake_password(void *ignore, const char *line)
 
 #ifdef HAVE_MENU
    menu_input_dialog_end();
-   rarch_menu_running_finished();
+   retroarch_menu_running_finished(false);
 #endif
 }
 #endif
@@ -326,7 +319,7 @@ bool netplay_handshake_init(netplay_t *netplay,
       goto error;
    }
 
-   if (ntohl(header[0]) != netplay_magic)
+   if (ntohl(header[0]) != NETPLAY_MAGIC)
    {
       dmsg = msg_hash_to_str(MSG_NETPLAY_NOT_RETROARCH);
       goto error;
@@ -350,7 +343,7 @@ bool netplay_handshake_init(netplay_t *netplay,
       /* We allow the connection but warn that this could cause issues. */
       dmsg = msg_hash_to_str(MSG_NETPLAY_DIFFERENT_VERSIONS);
       RARCH_WARN("%s\n", dmsg);
-      runloop_msg_queue_push(dmsg, 1, 180, false);
+      runloop_msg_queue_push(dmsg, 1, 180, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
    }
 
    /* We only care about platform magic if our core is quirky */
@@ -419,7 +412,7 @@ bool netplay_handshake_init(netplay_t *netplay,
    {
 #ifdef HAVE_MENU
       menu_input_ctx_line_t line;
-      rarch_menu_running();
+      retroarch_menu_running();
 #endif
 
       handshake_password_netplay = netplay;
@@ -454,7 +447,7 @@ error:
    if (dmsg)
    {
       RARCH_ERR("%s\n", dmsg);
-      runloop_msg_queue_push(dmsg, 1, 180, false);
+      runloop_msg_queue_push(dmsg, 1, 180, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
    }
    return false;
 }
@@ -488,7 +481,7 @@ static void netplay_handshake_ready(netplay_t *netplay,
    }
 
    RARCH_LOG("%s\n", msg);
-   runloop_msg_queue_push(msg, 1, 180, false);
+   runloop_msg_queue_push(msg, 1, 180, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
 
    /* Unstall if we were waiting for this */
    if (netplay->stall == NETPLAY_STALL_NO_CONNECTION)
@@ -500,7 +493,7 @@ static void netplay_handshake_ready(netplay_t *netplay,
  *
  * Send an INFO command.
  */
-bool netplay_handshake_info(netplay_t *netplay,
+static bool netplay_handshake_info(netplay_t *netplay,
       struct netplay_connection *connection)
 {
    struct info_buf_s info_buf;
@@ -549,7 +542,7 @@ bool netplay_handshake_info(netplay_t *netplay,
  *
  * Send a SYNC command.
  */
-bool netplay_handshake_sync(netplay_t *netplay,
+static bool netplay_handshake_sync(netplay_t *netplay,
       struct netplay_connection *connection)
 {
    /* If we're the server, now we send sync info */
@@ -562,10 +555,14 @@ bool netplay_handshake_sync(netplay_t *netplay,
    size_t nicklen, nickmangle = 0;
    bool nick_matched          = false;
 
+#ifdef HAVE_THREADS
    autosave_lock();
+#endif
    mem_info.id = RETRO_MEMORY_SAVE_RAM;
    core_get_memory(&mem_info);
+#ifdef HAVE_THREADS
    autosave_unlock();
+#endif
 
    /* Send basic sync info */
    cmd[0]     = htonl(NETPLAY_CMD_SYNC);
@@ -586,10 +583,10 @@ bool netplay_handshake_sync(netplay_t *netplay,
          + mem_info.size);
    cmd[2]     = htonl(netplay->self_frame_count);
    client_num = (uint32_t)(connection - netplay->connections + 1);
-    
+
    if (netplay->local_paused || netplay->remote_paused)
       client_num |= NETPLAY_CMD_SYNC_BIT_PAUSED;
-    
+
    cmd[3]     = htonl(client_num);
 
    if (!netplay_send(&connection->send_packet_buffer, connection->fd, cmd,
@@ -626,15 +623,17 @@ bool netplay_handshake_sync(netplay_t *netplay,
    else
       nickmangle = nicklen;
    matchct = 1;
-   do {
+   do
+   {
       nick_matched = false;
       for (i = 0; i < netplay->connections_size; i++)
       {
          struct netplay_connection *sc = &netplay->connections[i];
-         if (sc == connection) continue;
+         if (sc == connection)
+            continue;
          if (sc->active &&
-             sc->mode >= NETPLAY_CONNECTION_CONNECTED &&
-             !strncmp(connection->nick, sc->nick, NETPLAY_NICK_LEN))
+               sc->mode >= NETPLAY_CONNECTION_CONNECTED &&
+               !strncmp(connection->nick, sc->nick, NETPLAY_NICK_LEN))
          {
             nick_matched = true;
             break;
@@ -658,16 +657,22 @@ bool netplay_handshake_sync(netplay_t *netplay,
       return false;
 
    /* And finally, the SRAM */
+#ifdef HAVE_THREADS
    autosave_lock();
+#endif
    if (!netplay_send(&connection->send_packet_buffer, connection->fd,
             mem_info.data, mem_info.size) ||
          !netplay_send_flush(&connection->send_packet_buffer, connection->fd,
             false))
    {
+#ifdef HAVE_THREADS
       autosave_unlock();
+#endif
       return false;
    }
+#ifdef HAVE_THREADS
    autosave_unlock();
+#endif
 
    /* Now we're ready! */
    connection->mode = NETPLAY_CONNECTION_SPECTATING;
@@ -682,7 +687,7 @@ bool netplay_handshake_sync(netplay_t *netplay,
  * Data receiver for the second stage of handshake, receiving the other side's
  * nickname.
  */
-bool netplay_handshake_pre_nick(netplay_t *netplay,
+static bool netplay_handshake_pre_nick(netplay_t *netplay,
    struct netplay_connection *connection, bool *had_input)
 {
    struct nick_buf_s nick_buf;
@@ -706,7 +711,7 @@ bool netplay_handshake_pre_nick(netplay_t *netplay,
             msg_hash_to_str(MSG_FAILED_TO_RECEIVE_NICKNAME_FROM_HOST),
             sizeof(msg));
       RARCH_ERR("%s\n", msg);
-      runloop_msg_queue_push(msg, 1, 180, false);
+      runloop_msg_queue_push(msg, 1, 180, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
       return false;
    }
 
@@ -718,12 +723,10 @@ bool netplay_handshake_pre_nick(netplay_t *netplay,
    {
       settings_t *settings = config_get_ptr();
 
+      /* There's a password, so just put them in PRE_PASSWORD mode */
       if (  settings->paths.netplay_password[0] ||
             settings->paths.netplay_spectate_password[0])
-      {
-         /* There's a password, so just put them in PRE_PASSWORD mode */
          connection->mode = NETPLAY_CONNECTION_PRE_PASSWORD;
-      }
       else
       {
          connection->can_play = true;
@@ -731,14 +734,10 @@ bool netplay_handshake_pre_nick(netplay_t *netplay,
             return false;
          connection->mode = NETPLAY_CONNECTION_PRE_INFO;
       }
-
    }
+   /* Client needs to wait for INFO */
    else
-   {
-      /* Client needs to wait for INFO */
       connection->mode = NETPLAY_CONNECTION_PRE_INFO;
-
-   }
 
    *had_input = true;
    netplay_recv_flush(&connection->recv_packet_buffer);
@@ -751,7 +750,7 @@ bool netplay_handshake_pre_nick(netplay_t *netplay,
  * Data receiver for the third, optional stage of server handshake, receiving
  * the password and sending core/content info.
  */
-bool netplay_handshake_pre_password(netplay_t *netplay,
+static bool netplay_handshake_pre_password(netplay_t *netplay,
    struct netplay_connection *connection, bool *had_input)
 {
    struct password_buf_s password_buf;
@@ -779,7 +778,7 @@ bool netplay_handshake_pre_password(netplay_t *netplay,
             msg_hash_to_str(MSG_FAILED_TO_RECEIVE_NICKNAME_FROM_HOST),
             sizeof(msg));
       RARCH_ERR("%s\n", msg);
-      runloop_msg_queue_push(msg, 1, 180, false);
+      runloop_msg_queue_push(msg, 1, 180, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
       return false;
    }
 
@@ -796,7 +795,7 @@ bool netplay_handshake_pre_password(netplay_t *netplay,
 
       if (!memcmp(password_buf.password, hash, NETPLAY_PASS_HASH_LEN))
       {
-         correct = true;
+         correct              = true;
          connection->can_play = true;
       }
    }
@@ -831,7 +830,7 @@ bool netplay_handshake_pre_password(netplay_t *netplay,
  * Data receiver for the third stage of server handshake, receiving
  * the password.
  */
-bool netplay_handshake_pre_info(netplay_t *netplay,
+static bool netplay_handshake_pre_info(netplay_t *netplay,
    struct netplay_connection *connection, bool *had_input)
 {
    struct info_buf_s info_buf;
@@ -870,7 +869,7 @@ bool netplay_handshake_pre_info(netplay_t *netplay,
       return true;
    }
 
-   RECV(&info_buf.core_name, cmd_size)
+   RECV(&info_buf.content_crc, cmd_size)
    {
       RARCH_ERR("Failed to receive netplay info payload.\n");
       return false;
@@ -885,7 +884,7 @@ bool netplay_handshake_pre_info(netplay_t *netplay,
          /* Wrong core! */
          dmsg = msg_hash_to_str(MSG_NETPLAY_DIFFERENT_CORES);
          RARCH_ERR("%s\n", dmsg);
-         runloop_msg_queue_push(dmsg, 1, 180, false);
+         runloop_msg_queue_push(dmsg, 1, 180, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
          /* FIXME: Should still send INFO, so the other side knows what's what */
          return false;
       }
@@ -894,7 +893,7 @@ bool netplay_handshake_pre_info(netplay_t *netplay,
       {
          dmsg = msg_hash_to_str(MSG_NETPLAY_DIFFERENT_CORE_VERSIONS);
          RARCH_WARN("%s\n", dmsg);
-         runloop_msg_queue_push(dmsg, 1, 180, false);
+         runloop_msg_queue_push(dmsg, 1, 180, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
       }
    }
 
@@ -907,7 +906,7 @@ bool netplay_handshake_pre_info(netplay_t *netplay,
       {
          dmsg = msg_hash_to_str(MSG_CONTENT_CRC32S_DIFFER);
          RARCH_WARN("%s\n", dmsg);
-         runloop_msg_queue_push(dmsg, 1, 180, false);
+         runloop_msg_queue_push(dmsg, 1, 180, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
       }
    }
 
@@ -916,7 +915,6 @@ bool netplay_handshake_pre_info(netplay_t *netplay,
    {
       if (!netplay_handshake_sync(netplay, connection))
          return false;
-
    }
    else
    {
@@ -936,7 +934,7 @@ bool netplay_handshake_pre_info(netplay_t *netplay,
  * Data receiver for the client's third handshake stage, receiving the
  * synchronization information.
  */
-bool netplay_handshake_pre_sync(netplay_t *netplay,
+static bool netplay_handshake_pre_sync(netplay_t *netplay,
    struct netplay_connection *connection, bool *had_input)
 {
    uint32_t cmd[2];
@@ -948,13 +946,12 @@ bool netplay_handshake_pre_sync(netplay_t *netplay,
    retro_ctx_controller_info_t pad;
    char new_nick[NETPLAY_NICK_LEN];
    retro_ctx_memory_info_t mem_info;
-   settings_t *settings = config_get_ptr();
 
    RECV(cmd, sizeof(cmd))
    {
       const char *msg = msg_hash_to_str(MSG_NETPLAY_INCORRECT_PASSWORD);
       RARCH_ERR("%s\n", msg);
-      runloop_msg_queue_push(msg, 1, 180, false);
+      runloop_msg_queue_push(msg, 1, 180, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
       return false;
    }
 
@@ -1069,11 +1066,13 @@ bool netplay_handshake_pre_sync(netplay_t *netplay,
       snprintf(msg, sizeof(msg),
             msg_hash_to_str(MSG_NETPLAY_CHANGED_NICK), netplay->nick);
       RARCH_LOG("%s\n", msg);
-      runloop_msg_queue_push(msg, 1, 180, false);
+      runloop_msg_queue_push(msg, 1, 180, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
    }
 
    /* Now check the SRAM */
+#ifdef HAVE_THREADS
    autosave_lock();
+#endif
    mem_info.id = RETRO_MEMORY_SAVE_RAM;
    core_get_memory(&mem_info);
 
@@ -1087,7 +1086,9 @@ bool netplay_handshake_pre_sync(netplay_t *netplay,
       {
          RARCH_ERR("%s\n",
                msg_hash_to_str(MSG_FAILED_TO_RECEIVE_SRAM_DATA_FROM_HOST));
+#ifdef HAVE_THREADS
          autosave_unlock();
+#endif
          return false;
       }
 
@@ -1102,7 +1103,9 @@ bool netplay_handshake_pre_sync(netplay_t *netplay,
          {
             RARCH_ERR("%s\n",
                   msg_hash_to_str(MSG_FAILED_TO_RECEIVE_SRAM_DATA_FROM_HOST));
+#ifdef HAVE_THREADS
             autosave_unlock();
+#endif
             return false;
          }
          if (remote_sram_size > sizeof(uint32_t))
@@ -1112,7 +1115,9 @@ bool netplay_handshake_pre_sync(netplay_t *netplay,
       }
 
    }
+#ifdef HAVE_THREADS
    autosave_unlock();
+#endif
 
    /* We're ready! */
    *had_input = true;
@@ -1122,8 +1127,11 @@ bool netplay_handshake_pre_sync(netplay_t *netplay,
    netplay_recv_flush(&connection->recv_packet_buffer);
 
    /* Ask to switch to playing mode if we should */
-   if (!settings->bools.netplay_start_as_spectator)
-      return netplay_cmd_mode(netplay, NETPLAY_CONNECTION_PLAYING);
+   {
+      settings_t *settings = config_get_ptr();
+      if (!settings->bools.netplay_start_as_spectator)
+         return netplay_cmd_mode(netplay, NETPLAY_CONNECTION_PLAYING);
+   }
 
    return true;
 }

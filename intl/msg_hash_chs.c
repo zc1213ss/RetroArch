@@ -24,13 +24,15 @@
 #include "../configuration.h"
 #include "../verbosity.h"
 
-#if defined(_MSC_VER) && !defined(_XBOX)
+#if defined(_MSC_VER) && !defined(_XBOX) && (_MSC_VER >= 1500 && _MSC_VER < 1900)
+#if (_MSC_VER >= 1700)
 /* https://support.microsoft.com/en-us/kb/980263 */
 #pragma execution_character_set("utf-8")
-#pragma warning( disable : 4566 )
+#endif
+#pragma warning(disable:4566)
 #endif
 
-int menu_hash_get_help_chs_enum(enum msg_hash_enums msg, char *s, size_t len)
+int msg_hash_get_help_chs_enum(enum msg_hash_enums msg, char *s, size_t len)
 {
    settings_t      *settings = config_get_ptr();
 
@@ -632,15 +634,15 @@ int menu_hash_get_help_chs_enum(enum msg_hash_enums msg, char *s, size_t len)
          break;
       case MENU_ENUM_LABEL_VALUE_HELP_SCANNING_CONTENT_DESC:
          snprintf(s, len,
-               "若要扫描游戏内容，请访问菜单「%s」 \n"
+               "若要扫描游戏内容，请访问菜单「%s」\n"
                "并选择「%s」或者「%s」。\n"
-               " \n"
-               "文件将会同数据库中的条目进行对比。 \n"
-               "若文件匹配某个条目，则它会被加入收藏中。 \n"
-               " \n"
-               "你可以无需每次都打开文件浏览器，而可以直接 \n"
+               "\n"
+               "文件将会同数据库中的条目进行对比。\n"
+               "若文件匹配某个条目，则它会被加入戏列表中。\n"
+               "\n"
+               "你可以无需每次都打开文件浏览器，而可以直接\n"
                "通过菜单项「%s」->「%s」 来访\n"
-               "问这些游戏内容。 \n"
+               "问这些游戏内容。\n"
                " \n"
                "注意：不是所有核心的游戏内容都支持扫描录入。"
                ,
@@ -648,7 +650,7 @@ int menu_hash_get_help_chs_enum(enum msg_hash_enums msg, char *s, size_t len)
                msg_hash_to_str(MENU_ENUM_LABEL_VALUE_SCAN_DIRECTORY),
                msg_hash_to_str(MENU_ENUM_LABEL_VALUE_SCAN_FILE),
                msg_hash_to_str(MENU_ENUM_LABEL_VALUE_LOAD_CONTENT_LIST),
-               msg_hash_to_str(MENU_ENUM_LABEL_VALUE_CONTENT_COLLECTION_LIST)
+               msg_hash_to_str(MENU_ENUM_LABEL_VALUE_PLAYLISTS_TAB)
                );
          break;
       case MENU_ENUM_LABEL_VALUE_EXTRACTING_PLEASE_WAIT:
@@ -730,83 +732,87 @@ int menu_hash_get_help_chs_enum(enum msg_hash_enums msg, char *s, size_t len)
                );
          break;
       case MENU_ENUM_LABEL_VIDEO_DRIVER:
-         snprintf(s, len,
-               "当前视频驱动.");
+         {
+            const char *video_driver = settings->arrays.video_driver;
 
-         if (string_is_equal(settings->arrays.video_driver, "gl"))
-         {
             snprintf(s, len,
-                  "OpenGL视频驱动. \n"
-                  " \n"
-                  "This driver allows libretro GL cores to  \n"
-                  "be used in addition to software-rendered \n"
-                  "core implementations.\n"
-                  " \n"
-                  "Performance for software-rendered and \n"
-                  "libretro GL core implementations is \n"
-                  "dependent on your graphics card's \n"
-                  "underlying GL driver).");
-         }
-         else if (string_is_equal(settings->arrays.video_driver, "sdl2"))
-         {
-            snprintf(s, len,
-                  "SDL 2 视频驱动.\n"
-                  " \n"
-                  "This is an SDL 2 software-rendered video \n"
-                  "driver.\n"
-                  " \n"
-                  "Performance for software-rendered libretro \n"
-                  "core implementations is dependent \n"
-                  "on your platform SDL implementation.");
-         }
-         else if (string_is_equal(settings->arrays.video_driver, "sdl1"))
-         {
-            snprintf(s, len,
-                  "SDL 视频驱动.\n"
-                  " \n"
-                  "This is an SDL 1.2 software-rendered video \n"
-                  "driver.\n"
-                  " \n"
-                  "Performance is considered to be suboptimal. \n"
-                  "Consider using it only as a last resort.");
-         }
-         else if (string_is_equal(settings->arrays.video_driver, "d3d"))
-         {
-            snprintf(s, len,
-                  "Direct3D 视频驱动. \n"
-                  " \n"
-                  "Performance for software-rendered cores \n"
-                  "is dependent on your graphic card's \n"
-                  "underlying D3D driver).");
-         }
-         else if (string_is_equal(settings->arrays.video_driver, "exynos"))
-         {
-            snprintf(s, len,
-                  "Exynos-G2D 视频驱动. \n"
-                  " \n"
-                  "This is a low-level Exynos video driver. \n"
-                  "Uses the G2D block in Samsung Exynos SoC \n"
-                  "for blit operations. \n"
-                  " \n"
-                  "Performance for software rendered cores \n"
-                  "should be optimal.");
-         }
-         else if (string_is_equal(settings->arrays.video_driver, "drm"))
-         {
-            snprintf(s, len,
-                  "Plain DRM 视频驱动. \n"
-                  " \n"
-                  "This is a low-level video driver using. \n"
-                  "libdrm for hardware scaling using \n"
-                  "GPU overlays.");
-         }
-         else if (string_is_equal(settings->arrays.video_driver, "sunxi"))
-         {
-            snprintf(s, len,
-                  "Sunxi-G2D 视频驱动. \n"
-                  " \n"
-                  "This is a low-level Sunxi video driver. \n"
-                  "Uses the G2D block in Allwinner SoCs.");
+                  "当前视频驱动.");
+
+            if (string_is_equal(video_driver, "gl"))
+            {
+               snprintf(s, len,
+                     "OpenGL视频驱动. \n"
+                     " \n"
+                     "This driver allows libretro GL cores to  \n"
+                     "be used in addition to software-rendered \n"
+                     "core implementations.\n"
+                     " \n"
+                     "Performance for software-rendered and \n"
+                     "libretro GL core implementations is \n"
+                     "dependent on your graphics card's \n"
+                     "underlying GL driver).");
+            }
+            else if (string_is_equal(video_driver, "sdl2"))
+            {
+               snprintf(s, len,
+                     "SDL 2 视频驱动.\n"
+                     " \n"
+                     "This is an SDL 2 software-rendered video \n"
+                     "driver.\n"
+                     " \n"
+                     "Performance for software-rendered libretro \n"
+                     "core implementations is dependent \n"
+                     "on your platform SDL implementation.");
+            }
+            else if (string_is_equal(video_driver, "sdl1"))
+            {
+               snprintf(s, len,
+                     "SDL 视频驱动.\n"
+                     " \n"
+                     "This is an SDL 1.2 software-rendered video \n"
+                     "driver.\n"
+                     " \n"
+                     "Performance is considered to be suboptimal. \n"
+                     "Consider using it only as a last resort.");
+            }
+            else if (string_is_equal(video_driver, "d3d"))
+            {
+               snprintf(s, len,
+                     "Direct3D 视频驱动. \n"
+                     " \n"
+                     "Performance for software-rendered cores \n"
+                     "is dependent on your graphic card's \n"
+                     "underlying D3D driver).");
+            }
+            else if (string_is_equal(video_driver, "exynos"))
+            {
+               snprintf(s, len,
+                     "Exynos-G2D 视频驱动. \n"
+                     " \n"
+                     "This is a low-level Exynos video driver. \n"
+                     "Uses the G2D block in Samsung Exynos SoC \n"
+                     "for blit operations. \n"
+                     " \n"
+                     "Performance for software rendered cores \n"
+                     "should be optimal.");
+            }
+            else if (string_is_equal(video_driver, "drm"))
+            {
+               snprintf(s, len,
+                     "Plain DRM 视频驱动. \n"
+                     " \n"
+                     "This is a low-level video driver using. \n"
+                     "libdrm for hardware scaling using \n"
+                     "GPU overlays.");
+            }
+            else if (string_is_equal(video_driver, "sunxi"))
+            {
+               snprintf(s, len,
+                     "Sunxi-G2D 视频驱动. \n"
+                     " \n"
+                     "This is a low-level Sunxi video driver. \n"
+                     "Uses the G2D block in Allwinner SoCs.");
+            }
          }
          break;
       case MENU_ENUM_LABEL_AUDIO_DSP_PLUGIN:
@@ -1399,13 +1405,6 @@ int menu_hash_get_help_chs_enum(enum msg_hash_enums msg, char *s, size_t len)
                " \n"
                "减速游戏时，速度将被降低的倍数。");
          break;
-      case MENU_ENUM_LABEL_INPUT_AXIS_THRESHOLD:
-         snprintf(s, len,
-               "摇杆灵敏度\n"
-               " \n"
-               "必须把摇杆推到多大幅度才算按下按键。\n"
-               "数值范围为0.0至1.0。");
-         break;
       case MENU_ENUM_LABEL_INPUT_TURBO_PERIOD:
          snprintf(s, len,
                "Turbo period.\n"
@@ -1503,6 +1502,15 @@ int menu_hash_get_help_chs_enum(enum msg_hash_enums msg, char *s, size_t len)
          snprintf(s, len,
                "用双线性过滤使图像平滑。 \n"
                "如果你使用了渲染器，请关闭它。");
+         break;
+      case MENU_ENUM_LABEL_VIDEO_CTX_SCALING:
+         snprintf(s, len,
+#ifdef HAVE_ODROIDGO2
+               "RGA scaling and bicubic filtering. May break widgets."
+#else
+               "Hardware context scaling (if available)."
+#endif
+         );
          break;
       case MENU_ENUM_LABEL_TIMEDATE_ENABLE:
          snprintf(s, len,
@@ -1802,4 +1810,9 @@ const char *msg_hash_to_str_chs(enum msg_hash_enums msg)
    }
 
    return "null";
+}
+
+const char *msg_hash_get_wideglyph_str_chs(void)
+{
+   return "菜";
 }

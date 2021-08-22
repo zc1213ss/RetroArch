@@ -55,6 +55,7 @@ enum aspect_ratio
    ASPECT_RATIO_SQUARE,
    ASPECT_RATIO_CORE,
    ASPECT_RATIO_CUSTOM,
+   ASPECT_RATIO_FULL,
 
    ASPECT_RATIO_END
 };
@@ -76,6 +77,7 @@ enum rarch_display_type
    RARCH_DISPLAY_X11,
    /* video_display => N/A, video_window => HWND */
    RARCH_DISPLAY_WIN32,
+   RARCH_DISPLAY_WAYLAND,
    RARCH_DISPLAY_OSX
 };
 
@@ -83,6 +85,8 @@ enum font_driver_render_api
 {
    FONT_DRIVER_RENDER_DONT_CARE,
    FONT_DRIVER_RENDER_OPENGL_API,
+   FONT_DRIVER_RENDER_OPENGL_CORE_API,
+   FONT_DRIVER_RENDER_OPENGL1_API,
    FONT_DRIVER_RENDER_D3D8_API,
    FONT_DRIVER_RENDER_D3D9_API,
    FONT_DRIVER_RENDER_D3D10_API,
@@ -96,6 +100,7 @@ enum font_driver_render_api
    FONT_DRIVER_RENDER_METAL_API,
    FONT_DRIVER_RENDER_CACA,
    FONT_DRIVER_RENDER_SIXEL,
+   FONT_DRIVER_RENDER_NETWORK_VIDEO,
    FONT_DRIVER_RENDER_GDI,
    FONT_DRIVER_RENDER_VGA,
    FONT_DRIVER_RENDER_SWITCH
@@ -112,7 +117,7 @@ enum text_alignment
 #define COLOR_ABGR(r, g, b, a) (((unsigned)(a) << 24) | ((b) << 16) | ((g) << 8) | ((r) << 0))
 #endif
 
-#define LAST_ASPECT_RATIO ASPECT_RATIO_CUSTOM
+#define LAST_ASPECT_RATIO ASPECT_RATIO_FULL
 
 /* ABGR color format defines */
 
@@ -134,6 +139,26 @@ enum text_alignment
 #define FONT_COLOR_GET_BLUE(col)  (((col) >>  8) & 0xff)
 #define FONT_COLOR_GET_ALPHA(col) (((col) >>  0) & 0xff)
 #define FONT_COLOR_ARGB_TO_RGBA(col) ( (((col) >> 24) & 0xff) | (((unsigned)(col) << 8) & 0xffffff00) )
+
+typedef struct video_viewport
+{
+   int x;
+   int y;
+   unsigned width;
+   unsigned height;
+   unsigned full_width;
+   unsigned full_height;
+} video_viewport_t;
+
+typedef struct gfx_ctx_flags
+{
+   uint32_t flags;
+} gfx_ctx_flags_t;
+
+struct Size2D
+{
+   unsigned width, height;
+};
 
 RETRO_END_DECLS
 

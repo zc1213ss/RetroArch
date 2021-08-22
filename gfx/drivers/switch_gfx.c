@@ -54,34 +54,34 @@ typedef struct
    bool rgb32;
    unsigned width, height;
    unsigned rotation;
+	uint32_t last_width;
+	uint32_t last_height;
+
    struct video_viewport vp;
 
-	struct {
-		bool enable;
-		bool fullscreen;
+	struct
+   {
+      bool enable;
+      bool fullscreen;
 
-		uint32_t *pixels;
+      uint32_t *pixels;
 
-		unsigned width;
-		unsigned height;
+      unsigned width;
+      unsigned height;
 
-		unsigned tgtw;
-		unsigned tgth;
+      unsigned tgtw;
+      unsigned tgth;
 
-		struct scaler_ctx scaler;
-	} menu_texture;
-
+      struct scaler_ctx scaler;
+   } menu_texture;
 	surface_t surface;
 	revent_h vsync_h;
 	uint32_t image[1280*720];
-	
 	struct scaler_ctx scaler;
-	uint32_t last_width;
-	uint32_t last_height;
 } switch_video_t;
 
 static void *switch_init(const video_info_t *video,
-      const input_driver_t **input, void **input_data)
+      input_driver_t **input, void **input_data)
 {
    unsigned x, y;
    switch_video_t *sw = (switch_video_t*)calloc(1, sizeof(*sw));
@@ -92,17 +92,13 @@ static void *switch_init(const video_info_t *video,
 
    result_t r = display_init();
    if (r != RESULT_OK)
-   {
-      free(sw);
-      return NULL;
-   }
+      goto error;
    r = display_open_layer(&sw->surface);
 
    if (r != RESULT_OK)
    {
       display_finalize();
-      free(sw);
-      return NULL;
+      goto error;
    }
    r = display_get_vsync_event(&sw->vsync_h);
 
@@ -110,8 +106,7 @@ static void *switch_init(const video_info_t *video,
    {
 	   display_close_layer(&sw->surface);
       display_finalize();
-      free(sw);
-      return NULL;
+      goto error;
    }
 
    sw->vp.x           = 0;
@@ -120,15 +115,19 @@ static void *switch_init(const video_info_t *video,
    sw->vp.height      = 720;
    sw->vp.full_width  = 1280;
    sw->vp.full_height = 720;
-   video_driver_set_size(&sw->vp.width, &sw->vp.height);
+   video_driver_set_size(sw->vp.width, sw->vp.height);
 
-   sw->vsync = video->vsync;
-   sw->rgb32 = video->rgb32;
+   sw->vsync   = video->vsync;
+   sw->rgb32   = video->rgb32;
 
-   *input = NULL;
+   *input      = NULL;
    *input_data = NULL;
 
    return sw;
+
+error:
+   free(sw);
+   return NULL;
 }
 
 static void switch_wait_vsync(switch_video_t *sw)
@@ -143,8 +142,8 @@ static bool switch_frame(void *data, const void *frame,
       uint64_t frame_count, unsigned pitch,
       const char *msg, video_frame_info_t *video_info)
 {
-	static uint64_t last_frame = 0;
-	
+   static uint64_t last_frame = 0;
+
    unsigned x, y;
    result_t r;
    int tgtw, tgth, centerx, centery;
@@ -153,6 +152,14 @@ static bool switch_frame(void *data, const void *frame,
    int xsf                = 1280 / width;
    int ysf                = 720  / height;
    int sf                 = xsf;
+#ifdef HAVE_MENU
+   bool menu_is_alive     = video_info->menu_is_alive;
+#endif
+   bool statistics_show   = video_info->statistics_show;
+   struct font_params 
+      *osd_params         = (struct font_params*)
+      &video_info->osd_stat_params;
+
 
    if (ysf < sf)
       sf = ysf;
@@ -163,16 +170,14 @@ static bool switch_frame(void *data, const void *frame,
    centery                = (720-tgth)/2;
 
    /* clear image to black */
-   for(y = 0; y < 720; y++)
-   {
-      for(x = 0; x < 1280; x++)
+   for (y = 0; y < 720; y++)
+      for (x = 0; x < 1280; x++)
          sw->image[y*1280+x] = 0xFF000000;
-   }
 
    if(width > 0 && height > 0)
    {
-	   if(sw->last_width != width ||
-	      sw->last_height != height)
+      if(sw->last_width != width ||
+            sw->last_height != height)
       {
          scaler_ctx_gen_reset(&sw->scaler);
 
@@ -198,39 +203,36 @@ static bool switch_frame(void *data, const void *frame,
          sw->last_height        = height;
       }
 
-	   scaler_ctx_scale(&sw->scaler, sw->image + (centery * 1280) + centerx, frame);
+      scaler_ctx_scale(&sw->scaler, sw->image + (centery * 1280) + centerx, frame);
    }
 
 #if defined(HAVE_MENU)
    if (sw->menu_texture.enable)
-	{
-		menu_driver_frame(video_info);
+   {
+      menu_driver_frame(menu_is_alive, video_info);
 
-		if (sw->menu_texture.pixels)
-		{
+      if (sw->menu_texture.pixels)
+      {
 #if 0
-			if (sw->menu_texture.fullscreen)
+         if (sw->menu_texture.fullscreen)
          {
 #endif
-	         scaler_ctx_scale(&sw->menu_texture.scaler, sw->image +
-	                          ((720-sw->menu_texture.tgth)/2)*1280 +
-	                          ((1280-sw->menu_texture.tgtw)/2), sw->menu_texture.pixels);
+            scaler_ctx_scale(&sw->menu_texture.scaler, sw->image +
+                  ((720-sw->menu_texture.tgth)/2)*1280 +
+                  ((1280-sw->menu_texture.tgtw)/2), sw->menu_texture.pixels);
 #if 0
          }
          else
          {
          }
 #endif
-		}
-	}
-   else if (video_info->statistics_show)
+      }
+   }
+   else if (statistics_show)
    {
-      struct font_params *osd_params = (struct font_params*)
-         &video_info->osd_stat_params;
-
       if (osd_params)
-         font_driver_render_msg(video_info, NULL, video_info->stat_text,
-               (const struct font_params*)&video_info->osd_stat_params);
+         font_driver_render_msg(sw, video_info->stat_text,
+               osd_params, NULL);
    }
 #endif
 
@@ -242,20 +244,17 @@ static bool switch_frame(void *data, const void *frame,
    }
 #endif
 
-   if (msg && strlen(msg) > 0)
-      RARCH_LOG("message: %s\n", msg);
-
    r = surface_dequeue_buffer(&sw->surface, &out_buffer);
    if(r != RESULT_OK)
-	   return true; /* just skip the frame */
+      return true; /* just skip the frame */
 
    r = surface_wait_buffer(&sw->surface);
    if(r != RESULT_OK)
-	   return true;
+      return true;
    gfx_slow_swizzling_blit(out_buffer, sw->image, 1280, 720, 0, 0);
-   
+
    r = surface_queue_buffer(&sw->surface);
-   
+
    if (r != RESULT_OK)
       return false;
 
@@ -263,36 +262,16 @@ static bool switch_frame(void *data, const void *frame,
    return true;
 }
 
-static void switch_set_nonblock_state(void *data, bool toggle)
+static void switch_set_nonblock_state(void *data, bool toggle, bool c, unsigned d)
 {
    switch_video_t *sw = data;
-   sw->vsync = !toggle;
+   sw->vsync          = !toggle;
 }
 
-static bool switch_alive(void *data)
-{
-	(void) data;
-	return true;
-}
-
-static bool switch_focus(void *data)
-{
-	(void) data;
-	return true;
-}
-
-static bool switch_suppress_screensaver(void *data, bool enable)
-{
-	(void) data;
-	(void) enable;
-	return false;
-}
-
-static bool switch_has_windowed(void *data)
-{
-	(void) data;
-	return false;
-}
+static bool switch_alive(void *data) { return true; }
+static bool switch_focus(void *data) { return true; }
+static bool switch_suppress_screensaver(void *data, bool enable) { return false; }
+static bool switch_has_windowed(void *data) { return false; }
 
 static void switch_free(void *data)
 {
@@ -327,21 +306,13 @@ static void switch_viewport_info(void *data, struct video_viewport *vp)
    *vp = sw->vp;
 }
 
-static bool switch_read_viewport(void *data, uint8_t *buffer, bool is_idle)
-{
-   (void) data;
-   (void) buffer;
-
-   return true;
-}
-
 static void switch_set_texture_frame(
       void *data, const void *frame, bool rgb32,
       unsigned width, unsigned height, float alpha)
 {
    switch_video_t *sw = data;
 
-   if (  !sw->menu_texture.pixels         || 
+   if (  !sw->menu_texture.pixels         ||
          sw->menu_texture.width  != width ||
          sw->menu_texture.height != height)
    {
@@ -360,10 +331,10 @@ static void switch_set_texture_frame(
       xsf                     = 1280 / width;
       ysf                     = 720  / height;
       sf                      = xsf;
-      
+
       if (ysf < sf)
 	      sf = ysf;
-         
+
       sw->menu_texture.width  = width;
       sw->menu_texture.height = height;
       sw->menu_texture.tgtw   = width * sf;
@@ -406,8 +377,6 @@ static void switch_set_texture_enable(void *data, bool enable, bool full_screen)
 
 static const video_poke_interface_t switch_poke_interface = {
    NULL, /* get_flags */
-	NULL, /* set_coords */
-	NULL, /* set_mvp */
 	NULL, /* load_texture */
 	NULL, /* unload_texture */
 	NULL, /* set_video_mode */
@@ -451,10 +420,13 @@ video_driver_t video_switch = {
 	NULL, /* set_viewport */
 	switch_set_rotation,
 	switch_viewport_info,
-	switch_read_viewport,
+	NULL, /* read_viewport  */
 	NULL, /* read_frame_raw */
 #ifdef HAVE_OVERLAY
 	NULL, /* overlay_interface */
+#endif
+#ifdef HAVE_VIDEO_LAYOUT
+  NULL,
 #endif
 	switch_get_poke_interface,
 };

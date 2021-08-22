@@ -24,7 +24,13 @@
 
 #include "joypad_connection.h"
 
-static bool joypad_is_end_of_list(joypad_connection_t *pad);
+static bool joypad_is_end_of_list(joypad_connection_t *pad)
+{
+  return pad
+     && !pad->connected
+     && !pad->iface
+     &&  (pad->data == (void *)0xdeadbeef);
+}
 
 int pad_connection_find_vacant_pad(joypad_connection_t *joyconn)
 {
@@ -45,14 +51,11 @@ int pad_connection_find_vacant_pad(joypad_connection_t *joyconn)
 static void set_end_of_list(joypad_connection_t *list, unsigned end)
 {
   joypad_connection_t *entry = (joypad_connection_t *)&list[end];
-  entry->connected = false;
-  entry->iface = NULL;
-  entry->data = (void *)0xdeadbeef;
+  entry->connected           = false;
+  entry->iface               = NULL;
+  entry->data                = (void*)0xdeadbeef;
 }
 
-static bool joypad_is_end_of_list(joypad_connection_t *pad) {
-  return pad && !pad->connected && !pad->iface && pad->data == (void *)0xdeadbeef;
-}
 
 /**
  * Since the pad_connection_destroy() call needs to iterate through this
@@ -114,6 +117,8 @@ int32_t pad_connection_pad_init(joypad_connection_t *joyconn,
       { "PS2/PSX Controller Adapter",    0,     0,  &pad_connection_ps2adapter },
       { "PSX to PS3 Controller Adapter", 0,     0,  &pad_connection_psxadapter },
       { "Mayflash DolphinBar",           0,     0,  &pad_connection_wii },
+      { "Retrode",                       0,     0,  &pad_connection_retrode },
+      { "HORI mini wired PS4",           0,     0,  &pad_connection_ps4_hori_mini },
       { 0, 0}
    };
    joypad_connection_t *s = NULL;
@@ -146,14 +151,20 @@ int32_t pad_connection_pad_init(joypad_connection_t *joyconn,
    pad_map[9].pid         = PID_PCS_PSX2PS3;
    pad_map[10].vid        = 1406;
    pad_map[10].pid        = 774;
+   pad_map[11].vid        = VID_RETRODE;
+   pad_map[11].pid        = PID_RETRODE;
+   pad_map[12].vid        = VID_HORI_1;
+   pad_map[12].pid        = PID_HORI_MINI_WIRED_PS4;
 
    if (s)
    {
       unsigned i;
+      
+      const bool has_name = !string_is_empty(name);
 
       for (i = 0; name && pad_map[i].name; i++)
       {
-         const char *name_match = strstr(pad_map[i].name, name);
+         const char *name_match = has_name ? strstr(pad_map[i].name, name) : NULL;
 
          /* Never change, Nintendo. */
          if(pad_map[i].vid == 1406 && pad_map[i].pid == 816)
@@ -172,8 +183,10 @@ int32_t pad_connection_pad_init(joypad_connection_t *joyconn,
 
          if (name_match || (pad_map[i].vid == vid && pad_map[i].pid == pid))
          {
+            RARCH_DBG("Pad was matched to \"%s\". Setting up an interface.\n", name_match);
             s->iface      = pad_map[i].iface;
-            s->data       = s->iface->init(data, pad, driver);
+            s->data       = data;
+            s->connection = s->iface->init(data, pad, driver);
             s->connected  = true;
 #if 0
             RARCH_LOG("%s found \n", pad_map[i].name);
@@ -192,8 +205,9 @@ int32_t pad_connection_pad_init(joypad_connection_t *joyconn,
        * set up one without an interface */
       if (!s->connected)
       {
-         s->iface = NULL;
-         s->data = data;
+        RARCH_DBG("Pad was not matched. Setting up without an interface.\n");
+         s->iface     = NULL;
+         s->data      = data;
          s->connected = true;
       }
    }
@@ -208,15 +222,16 @@ void pad_connection_pad_deinit(joypad_connection_t *joyconn, uint32_t pad)
 
    if (joyconn->iface)
    {
-      joyconn->iface->set_rumble(joyconn->data, RETRO_RUMBLE_STRONG, 0);
-      joyconn->iface->set_rumble(joyconn->data, RETRO_RUMBLE_WEAK, 0);
+      joyconn->iface->set_rumble(joyconn->connection, RETRO_RUMBLE_STRONG, 0);
+      joyconn->iface->set_rumble(joyconn->connection, RETRO_RUMBLE_WEAK, 0);
 
       if (joyconn->iface->deinit)
-         joyconn->iface->deinit(joyconn->data);
+         joyconn->iface->deinit(joyconn->connection);
    }
 
-   joyconn->iface     = NULL;
-   joyconn->connected = false;
+   joyconn->iface      = NULL;
+   joyconn->connected  = false;
+   joyconn->connection = NULL;
 }
 
 void pad_connection_packet(joypad_connection_t *joyconn, uint32_t pad,
@@ -224,17 +239,17 @@ void pad_connection_packet(joypad_connection_t *joyconn, uint32_t pad,
 {
    if (!joyconn || !joyconn->connected)
        return;
-   if (joyconn->iface && joyconn->data && joyconn->iface->packet_handler)
-      joyconn->iface->packet_handler(joyconn->data, data, length);
+   if (joyconn->iface && joyconn->connection && joyconn->iface->packet_handler)
+      joyconn->iface->packet_handler(joyconn->connection, data, length);
 }
 
 void pad_connection_get_buttons(joypad_connection_t *joyconn,
       unsigned pad, input_bits_t *state)
 {
-	if (joyconn && joyconn->iface)
-		joyconn->iface->get_buttons(joyconn->data, state);
+   if (joyconn && joyconn->iface)
+      joyconn->iface->get_buttons(joyconn->connection, state);
    else
-		BIT256_CLEAR_ALL_PTR( state );
+      BIT256_CLEAR_ALL_PTR( state );
 }
 
 int16_t pad_connection_get_axis(joypad_connection_t *joyconn,
@@ -242,7 +257,7 @@ int16_t pad_connection_get_axis(joypad_connection_t *joyconn,
 {
    if (!joyconn || !joyconn->iface)
       return 0;
-   return joyconn->iface->get_axis(joyconn->data, i);
+   return joyconn->iface->get_axis(joyconn->connection, i);
 }
 
 bool pad_connection_has_interface(joypad_connection_t *joyconn, unsigned pad)
@@ -272,7 +287,7 @@ bool pad_connection_rumble(joypad_connection_t *joyconn,
    if (!joyconn->iface || !joyconn->iface->set_rumble)
       return false;
 
-   joyconn->iface->set_rumble(joyconn->data, effect, strength);
+   joyconn->iface->set_rumble(joyconn->connection, effect, strength);
    return true;
 }
 
@@ -280,5 +295,5 @@ const char* pad_connection_get_name(joypad_connection_t *joyconn, unsigned pad)
 {
    if (!joyconn || !joyconn->iface || !joyconn->iface->get_name)
       return NULL;
-   return joyconn->iface->get_name(joyconn->data);
+   return joyconn->iface->get_name(joyconn->connection);
 }

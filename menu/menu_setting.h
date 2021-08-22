@@ -29,14 +29,6 @@
 
 RETRO_BEGIN_DECLS
 
-enum menu_setting_ctl_state
-{
-   MENU_SETTING_CTL_NONE = 0,
-   MENU_SETTING_CTL_NEW,
-   MENU_SETTING_CTL_IS_OF_PATH_TYPE,
-   MENU_SETTING_CTL_ACTION_RIGHT
-};
-
 enum setting_list_flags
 {
    SL_FLAG_MAIN_MENU                                =  (1 << 0),
@@ -74,9 +66,7 @@ enum setting_list_flags
 
 #define SL_FLAG_SETTINGS_GROUP_ALL (SL_FLAG_SETTINGS_ALL - SL_FLAG_MAIN_MENU)
 
-int menu_setting_generic(rarch_setting_t *setting, bool wraparound);
-
-int menu_setting_set_flags(rarch_setting_t *setting);
+int menu_setting_generic(rarch_setting_t *setting, size_t idx, bool wraparound);
 
 int menu_setting_set(unsigned type, unsigned action, bool wraparound);
 
@@ -92,86 +82,26 @@ rarch_setting_t *menu_setting_find(const char *label);
 
 rarch_setting_t *menu_setting_find_enum(enum msg_hash_enums enum_idx);
 
-/**
- * setting_get_string_representation:
- * @setting            : pointer to setting
- * @s                  : buffer to write contents of string representation to.
- * @len                : size of the buffer (@s)
- *
- * Get a setting value's string representation.
- **/
-void menu_setting_get_string_representation(rarch_setting_t *setting, char *s, size_t len);
-
-/**
- * menu_setting_get_label:
- * @list               : File list on which to perform the search
- * @s                  : String for the type to be represented on-screen as
- *                       a label.
- * @len                : Size of @s.
- * @w                  : Width of the string (for text label representation
- *                       purposes in the menu display driver).
- * @type               : Identifier of setting.
- * @menu_label         : Menu Label identifier of setting.
- * @label              : Label identifier of setting.
- * @idx                : Index identifier of setting.
- *
- * Get associated label of a setting.
- **/
-void menu_setting_get_label(file_list_t *list, char *s,
-      size_t len, unsigned *w, unsigned type,
-      const char *menu_label, const char *label, unsigned idx);
-
 int menu_action_handle_setting(rarch_setting_t *setting,
       unsigned type, unsigned action, bool wraparound);
 
 enum setting_type menu_setting_get_browser_selection_type(
       rarch_setting_t *setting);
 
-void *setting_get_ptr(rarch_setting_t *setting);
+void setting_generic_handle_change(rarch_setting_t *setting);
 
-void general_write_handler(rarch_setting_t *setting);
-
-void general_read_handler(rarch_setting_t *setting);
-
-void menu_settings_list_current_add_cmd(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      enum event_command values);
-
-void menu_settings_list_current_add_range(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      float min, float max, float step,
-      bool enforce_minrange_enable,
-      bool enforce_maxrange_enable);
-
-void settings_data_list_current_add_flags(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      unsigned values);
-
-void settings_data_list_current_add_free_flags(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      unsigned values);
-
-void menu_settings_list_current_add_enum_idx(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      enum msg_hash_enums enum_idx);
-
-void menu_settings_list_current_add_enum_value_idx(
-      rarch_setting_t **list,
-      rarch_setting_info_t *list_info,
-      enum msg_hash_enums enum_idx);
+/**
+ * menu_setting_new:
+ * @mask               : Bitmask of settings to include.
+ *
+ * Request a list of settings based on @mask.
+ *
+ * Returns: settings list composed of all requested
+ * settings on success, otherwise NULL.
+ **/
+rarch_setting_t *menu_setting_new(void);
 
 void menu_setting_free(rarch_setting_t *setting);
-
-bool settings_list_append(rarch_setting_t **list,
-      rarch_setting_info_t *list_info);
-
-bool menu_setting_ctl(
-      enum menu_setting_ctl_state state, void *data);
 
 RETRO_END_DECLS
 

@@ -1,18 +1,21 @@
 #include <errno.h>
 #include <reent.h>
-#include "../../defines/psp_defines.h"
+#include <defines/psp_defines.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/kernel/threadmgr.h>
 
-static int _newlib_heap_memblock;
-static unsigned _newlib_heap_size;
-static char *_newlib_heap_base, *_newlib_heap_end, *_newlib_heap_cur;
+
+int _newlib_heap_memblock;
+unsigned _newlib_heap_size;
+char *_newlib_heap_base, *_newlib_heap_end, *_newlib_heap_cur;
 static char _newlib_sbrk_mutex[32] __attribute__ ((aligned (8)));
 
 static int _newlib_vm_memblock;
 
 extern int _newlib_heap_size_user __attribute__((weak));
 extern int _newlib_vm_size_user __attribute__((weak));
+
+#define ALIGN(x, a)	(((x) + ((a) - 1)) & ~((a) - 1))
 
 void * _sbrk_r(struct _reent *reent, ptrdiff_t incr) {
 	if (sceKernelLockLwMutex((struct SceKernelLwMutexWork*)_newlib_sbrk_mutex, 1, 0) < 0)
@@ -35,8 +38,8 @@ void _init_vita_heap(void) {
 
 	int _newlib_vm_size = 0;
 	if (&_newlib_vm_size_user != NULL) {
-		_newlib_vm_size = _newlib_vm_size_user;
-	  _newlib_vm_memblock = sceKernelAllocMemBlockForVM("code", _newlib_vm_size_user);
+	  _newlib_vm_size = ALIGN(_newlib_vm_size_user, 0x100000);
+	  _newlib_vm_memblock = sceKernelAllocMemBlockForVM("code", _newlib_vm_size);
 
 	  if (_newlib_vm_memblock < 0){
 	    //sceClibPrintf("sceKernelAllocMemBlockForVM failed\n");
@@ -50,11 +53,18 @@ void _init_vita_heap(void) {
 	if (sceKernelCreateLwMutex((struct SceKernelLwMutexWork*)_newlib_sbrk_mutex, "sbrk mutex", 0, 0, 0) < 0) {
 		goto failure;
 	}
+	
+	// Always allocating the max avaliable USER_RW mem on the system
+	SceKernelFreeMemorySizeInfo info;
+	info.size = sizeof(SceKernelFreeMemorySizeInfo);
+	sceKernelGetFreeMemorySize(&info);
+
+   printf("sceKernelGetFreeMemorySize %x\n", info.size_user);
 
 	if (&_newlib_heap_size_user != NULL) {
 		_newlib_heap_size = _newlib_heap_size_user;
 	}else{
-		_newlib_heap_size = 192 * 1024 * 1024;
+		_newlib_heap_size = info.size_user - RAM_THRESHOLD;
 	}
 
 	_newlib_heap_size -= _newlib_vm_size;

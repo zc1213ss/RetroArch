@@ -8,6 +8,7 @@
 extern "C" {
 #endif
 void wait_for_input(void);
+void error_and_quit(const char* errorStr);
 void dump_result_value(Result val);
 #ifdef __cplusplus
 }
@@ -24,4 +25,4 @@ void dump_result_value(Result val);
 #define PRINTFPOS_STR(X,Y) "\x1b["X";"Y"H"
 #define PRINTF_LINE(X) "\x1b["X";0H"
 
-#endif //_CTR_DEBUG_H__
+#endif /* _CTR_DEBUG_H__ */

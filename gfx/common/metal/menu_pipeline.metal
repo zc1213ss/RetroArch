@@ -1,13 +1,22 @@
-//
-//  pipeline_ribbon.metal
-//  RetroArch
-//
-//  Created by Stuart Carnie on 6/30/18.
-//
+/*  RetroArch - A frontend for libretro.
+ *  Copyright (C) 2018      - Stuart Carnie
+ *  copyright (c) 2011-2021 - Daniel De Matteis
+ *
+ *  RetroArch is free software: you can redistribute it and/or modify it under the terms
+ *  of the GNU General Public License as published by the Free Software Found-
+ *  ation, either version 3 of the License, or (at your option) any later version.
+ *
+ *  RetroArch is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ *  PURPOSE.  See the GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License along with RetroArch.
+ *  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include <metal_stdlib>
 
-#import "ShaderTypes.h"
+#import "metal_shader_types.h"
 
 using namespace metal;
 
@@ -44,10 +53,10 @@ float xmb_noise2(float3 x, const device Uniforms &constants)
 vertex FontFragmentIn ribbon_simple_vertex(const SpriteVertex in [[ stage_in ]], const device Uniforms &constants [[ buffer(BufferIndexUniforms) ]])
 {
    float4 t = (constants.projectionMatrix * float4(in.position, 0, 1));
-   
+
    float3 v = float3(t.x, 0.0, 1.0-t.y);
    float3 v2 = v;
-   
+
    v2.x = v2.x + constants.time / 2.0;
    v2.z = v.z * 3.0;
    v.y = cos((v.x + v.z / 3.0 + constants.time) * 2.0) / 10.0 + ribbon::noise(v2.xyz) / 4.0;
@@ -70,7 +79,6 @@ typedef struct
    vector_float4 position [[position]];
    vector_float3 vEC;
 } RibbonOutIn;
-
 
 vertex RibbonOutIn ribbon_vertex(const SpriteVertex in [[ stage_in ]], const device Uniforms &constants [[ buffer(BufferIndexUniforms) ]])
 {

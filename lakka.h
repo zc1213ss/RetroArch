@@ -23,7 +23,10 @@
 #define LAKKA_BLUETOOTH_PATH "/storage/.cache/services/bluez.conf"
 #define LAKKA_UPDATE_DIR     "/storage/.update/"
 #define LAKKA_CONNMAN_DIR    "/storage/.cache/connman/"
+#define LAKKA_LOCALAP_PATH   "/storage/.cache/services/localap.conf"
+#define LAKKA_TIMEZONE_PATH  "/storage/.cache/timezone"
 
-#include "switch_performance_profiles.h"
+#define DEFAULT_TIMEZONE "UTC"
+#define TIMEZONE_LENGTH 255
 
 #endif

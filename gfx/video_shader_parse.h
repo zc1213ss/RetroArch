@@ -17,29 +17,24 @@
 #ifndef __VIDEO_SHADER_PARSE_H
 #define __VIDEO_SHADER_PARSE_H
 
-#include "video_state_tracker.h"
-
 #include <boolean.h>
 #include <retro_common_api.h>
 #include <retro_miscellaneous.h>
 #include <file/config_file.h>
+#include <file/file_path.h>
 
 RETRO_BEGIN_DECLS
 
 #ifndef GFX_MAX_SHADERS
-#define GFX_MAX_SHADERS 26
+#define GFX_MAX_SHADERS 64
 #endif
 
 #ifndef GFX_MAX_TEXTURES
-#define GFX_MAX_TEXTURES 8
-#endif
-
-#ifndef GFX_MAX_VARIABLES
-#define GFX_MAX_VARIABLES 64
+#define GFX_MAX_TEXTURES 64
 #endif
 
 #ifndef GFX_MAX_PARAMETERS
-#define GFX_MAX_PARAMETERS 128
+#define GFX_MAX_PARAMETERS 1024
 #endif
 
 #ifndef GFX_MAX_FRAME_HISTORY
@@ -84,127 +79,106 @@ enum gfx_wrap_type
 
 struct gfx_fbo_scale
 {
-   enum gfx_scale_type type_x;
-   enum gfx_scale_type type_y;
+   unsigned abs_x;
+   unsigned abs_y;
    float scale_x;
    float scale_y;
+   enum gfx_scale_type type_x;
+   enum gfx_scale_type type_y;
    bool fp_fbo;
    bool srgb_fbo;
    bool valid;
-   unsigned abs_x;
-   unsigned abs_y;
 };
 
 struct video_shader_parameter
 {
-   char id[64];
-   char desc[64];
+   int pass;
    float current;
    float minimum;
    float initial;
    float maximum;
    float step;
-   int pass;
+   char id[64];
+   char desc[64];
 };
 
 struct video_shader_pass
 {
+   struct gfx_fbo_scale fbo; /* unsigned alignment */
+   unsigned filter;
+   unsigned frame_count_mod;
+   enum gfx_wrap_type wrap;
    struct
    {
-      char path[PATH_MAX_LENGTH];
       struct
       {
          char *vertex; /* Dynamically allocated. Must be free'd. */
          char *fragment; /* Dynamically allocated. Must be free'd. */
       } string;
+      char path[PATH_MAX_LENGTH];
    } source;
-
    char alias[64];
-   struct gfx_fbo_scale fbo;
-   enum gfx_wrap_type wrap;
    bool mipmap;
-   unsigned filter;
-   unsigned frame_count_mod;
    bool feedback;
 };
 
 struct video_shader_lut
 {
+   unsigned filter;
+   enum gfx_wrap_type wrap;
    char id[64];
    char path[PATH_MAX_LENGTH];
-   enum gfx_wrap_type wrap;
    bool mipmap;
-   unsigned filter;
 };
 
 /* This is pretty big, shouldn't be put on the stack.
  * Avoid lots of allocation for convenience. */
 struct video_shader
 {
-   enum rarch_shader_type type;
-
-   char prefix[64];
-   char script_class[512];
-   char script_path[PATH_MAX_LENGTH];
-   char path[PATH_MAX_LENGTH];
-   char *script; /* Dynamically allocated. Must be free'd. Only used by XML. */
-
-   bool modern; /* Only used for XML shaders. */
-
-   unsigned passes;
-   unsigned luts;
-   unsigned num_parameters;
-   unsigned variables;
+   struct video_shader_parameter parameters[GFX_MAX_PARAMETERS]; /* int alignment */
    /* If < 0, no feedback pass is used. Otherwise,
     * the FBO after pass #N is passed a texture to next frame. */
    int feedback_pass;
    int history_size;
 
-   struct video_shader_pass pass[GFX_MAX_SHADERS];
+   struct video_shader_pass pass[GFX_MAX_SHADERS]; /* unsigned alignment */
+   struct video_shader_lut lut[GFX_MAX_TEXTURES];  /* unsigned alignment */
+   unsigned passes;
+   unsigned luts;
+   unsigned num_parameters;
+   unsigned variables;
 
-   struct video_shader_lut lut[GFX_MAX_TEXTURES];
+   char prefix[64];
 
-   struct video_shader_parameter parameters[GFX_MAX_PARAMETERS];
-   struct state_tracker_uniform_info variable[GFX_MAX_VARIABLES];
+   /* Path to the root preset */
+   char path[PATH_MAX_LENGTH];
+
+   /* Path to the original preset loaded, if this is a preset with the #reference
+    * directive then this will be different than the path*/
+   char loaded_preset_path[PATH_MAX_LENGTH];
+
+   bool modern; /* Only used for XML shaders. */
+   /* indicative of whether shader was modified - 
+    * for instance from the menus */
+   bool modified;
 };
 
-/**
- * video_shader_read_conf_cgp:
- * @conf              : Preset file to read from.
- * @shader            : Shader passes handle.
- *
- * Loads preset file and all associated state (passes,
- * textures, imports, etc).
- *
- * Returns: true (1) if successful, otherwise false (0).
- **/
-bool video_shader_read_conf_cgp(config_file_t *conf,
-      struct video_shader *shader);
-
-/**
- * video_shader_write_conf_cgp:
- * @conf              : Preset file to read from.
- * @shader            : Shader passes handle.
- *
- * Saves preset and all associated state (passes,
- * textures, imports, etc) to disk.
- **/
-void video_shader_write_conf_cgp(config_file_t *conf,
-      struct video_shader *shader);
-
-/**
- * video_shader_resolve_relative:
- * @shader            : Shader pass handle.
- * @ref_path          : Relative shader path.
- *
- * Resolves relative shader path (@ref_path) into absolute
- * shader paths.
- **/
-void video_shader_resolve_relative(struct video_shader *shader,
-      const char *ref_path);
 
 /**
  * video_shader_resolve_parameters:
+ * @conf              : Preset file to read from.
+ * @shader            : Shader passes handle.
+ *
+ * Resolves all shader parameters belonging to shaders
+ * from the #pragma parameter lines in the shader for each pass.
+ * 
+ * Returns: true (1) if successful, otherwise false (0).
+ **/
+bool video_shader_resolve_parameters(struct video_shader *shader);
+
+
+/**
+ * video_shader_load_current_parameter_values:
  * @conf              : Preset file to read from.
  * @shader            : Shader passes handle.
  *
@@ -212,43 +186,57 @@ void video_shader_resolve_relative(struct video_shader *shader,
  *
  * Returns: true (1) if successful, otherwise false (0).
  **/
-bool video_shader_resolve_current_parameters(config_file_t *conf,
-      struct video_shader *shader);
+bool video_shader_load_current_parameter_values(config_file_t *conf, struct video_shader *shader);
+
 
 /**
- * video_shader_resolve_parameters:
- * @conf              : Preset file to read from.
- * @shader            : Shader passes handle.
+ * video_shader_load_preset_into_shader:
+ * @path              : Path to preset file, could be a Simple Preset (including a #reference) or Full Preset
+ * @shader            : Shader
  *
- * Resolves all shader parameters belonging to shaders.
+ * Loads preset file to a shader including passes, textures and parameters
  *
  * Returns: true (1) if successful, otherwise false (0).
  **/
-bool video_shader_resolve_parameters(config_file_t *conf,
-      struct video_shader *shader);
+bool video_shader_load_preset_into_shader(const char *path, struct video_shader *shader);
+
+
+/**
+ * video_shader_write_preset:
+ * @path              : File to write to
+ * @shader            : Shader to write
+ * @reference         : Whether a simple preset should be written with the #reference to another preset in it
+ *
+ * Writes a preset to disk. Can be written as a simple preset (With the #reference directive in it) or a full preset.
+ **/
+bool video_shader_write_preset(const char *path,
+                                 const char *shader_dir,
+                                 const struct video_shader *shader, 
+                                 bool reference);
+
+
+enum rarch_shader_type video_shader_get_type_from_ext(const char *ext, bool *is_preset);
 
 /**
  * video_shader_parse_type:
  * @path              : Shader path.
- * @fallback          : Fallback shader type in case no
- *                      type could be found.
  *
  * Parses type of shader.
  *
- * Returns: value of shader type on success, otherwise will return
- * user-supplied @fallback value.
+ * Returns: value of shader type if it could be determined,
+ * otherwise RARCH_SHADER_NONE.
  **/
-enum rarch_shader_type video_shader_parse_type(const char *path,
-      enum rarch_shader_type fallback);
-
-enum rarch_shader_type video_shader_get_type_from_ext(
-      const char *ext, bool *is_preset);
+#define video_shader_parse_type(path) video_shader_get_type_from_ext(path_get_extension((path)), NULL)
 
 bool video_shader_is_supported(enum rarch_shader_type type);
 
 bool video_shader_any_supported(void);
 
 bool video_shader_check_for_changes(void);
+
+const char *video_shader_type_to_str(enum rarch_shader_type type);
+
+const char *video_shader_get_preset_extension(enum rarch_shader_type type);
 
 RETRO_END_DECLS
 

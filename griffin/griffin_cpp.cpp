@@ -1,5 +1,6 @@
 /* RetroArch - A frontend for libretro.
 * Copyright (C) 2011-2017 - Daniel De Matteis
+* Copyright (C) 2016-2019 - Brad Parker
 *
 * RetroArch is free software: you can redistribute it and/or modify it under the terms
 * of the GNU General Public License as published by the Free Software Found-
@@ -17,16 +18,25 @@
 #define HAVE_COMPRESSION 1
 #endif
 
+#if defined(_WIN32) && !defined(_XBOX)
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #if defined(_MSC_VER)
 #include <string.h>
 #include <compat/posix_string.h>
 #endif
 
-/*============================================================
-MENU
-============================================================ */
-#ifdef HAVE_XUI
-#include "../menu/drivers/xui.cpp"
+#if defined(HAVE_OPENGL) && defined(HAVE_ANGLE)
+#ifndef HAVE_OPENGLES
+#define HAVE_OPENGLES  1
+#endif
+#if !defined(HAVE_OPENGLES3) && !defined(HAVE_OPENGLES2)
+#define HAVE_OPENGLES3 1
+#endif
+#ifndef HAVE_EGL
+#define HAVE_EGL       1
+#endif
 #endif
 
 /*============================================================
@@ -36,32 +46,30 @@ UI
 #ifndef __APPLE__
 #define HAVE_MAIN /* also requires defining in frontend.c */
 #endif
+
+#undef mkdir
+
 #include "../ui/drivers/ui_qt.cpp"
 
-#include "../ui/drivers/qt/ui_qt_window.cpp"
-#include "../ui/drivers/qt/ui_qt_load_core_window.cpp"
-#include "../ui/drivers/qt/ui_qt_browser_window.cpp"
-#include "../ui/drivers/qt/ui_qt_msg_window.cpp"
-#include "../ui/drivers/qt/ui_qt_application.cpp"
 #include "../ui/drivers/qt/gridview.cpp"
-#include "../ui/drivers/qt/shaderparamsdialog.cpp"
-#include "../ui/drivers/qt/coreoptionsdialog.cpp"
-#include "../ui/drivers/qt/filedropwidget.cpp"
-#include "../ui/drivers/qt/coreinfodialog.cpp"
-#include "../ui/drivers/qt/playlistentrydialog.cpp"
-#include "../ui/drivers/qt/viewoptionsdialog.cpp"
-#include "../ui/drivers/qt/playlist.cpp"
-#include "../ui/drivers/qt/updateretroarch.cpp"
-#include "../ui/drivers/qt/thumbnaildownload.cpp"
-#include "../ui/drivers/qt/thumbnailpackdownload.cpp"
-#include "../ui/drivers/qt/playlistthumbnaildownload.cpp"
+#include "../ui/drivers/qt/qt_dialogs.cpp"
+#include "../ui/drivers/qt/qt_widgets.cpp"
+#include "../ui/drivers/qt/qt_playlist.cpp"
+#include "../ui/drivers/qt/qt_downloads.cpp"
+#ifdef HAVE_MENU
+#include "../ui/drivers/qt/qt_options.cpp"
+#include "../ui/drivers/qt/moc_options.cpp"
+#include "../ui/drivers/qt/moc_settingswidgets.cpp"
+#endif
 #include "../ui/drivers/moc_ui_qt.cpp"
 #include "../ui/drivers/qt/moc_coreinfodialog.cpp"
 #include "../ui/drivers/qt/moc_coreoptionsdialog.cpp"
 #include "../ui/drivers/qt/moc_filedropwidget.cpp"
 #include "../ui/drivers/qt/moc_gridview.cpp"
 #include "../ui/drivers/qt/moc_playlistentrydialog.cpp"
+#if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_SLANG) || defined(HAVE_HLSL)
 #include "../ui/drivers/qt/moc_shaderparamsdialog.cpp"
+#endif
 #include "../ui/drivers/qt/moc_ui_qt_load_core_window.cpp"
 #include "../ui/drivers/qt/moc_viewoptionsdialog.cpp"
 #endif
@@ -73,6 +81,10 @@ VIDEO DRIVER
 #include "../gfx/drivers_shader/shader_vulkan.cpp"
 #endif
 
+#if defined(HAVE_OPENGL_CORE)
+#include "../gfx/drivers_shader/shader_gl_core.cpp"
+#endif
+
 #if defined(HAVE_SPIRV_CROSS)
 #if defined(ENABLE_HLSL)
 #include "../deps/SPIRV-Cross/spirv_hlsl.cpp"
@@ -81,9 +93,10 @@ VIDEO DRIVER
 #include "../deps/SPIRV-Cross/spirv_cfg.cpp"
 #include "../deps/SPIRV-Cross/spirv_glsl.cpp"
 #include "../deps/SPIRV-Cross/spirv_msl.cpp"
+#include "../deps/SPIRV-Cross/spirv_parser.cpp"
+#include "../deps/SPIRV-Cross/spirv_cross_parsed_ir.cpp"
 #ifdef HAVE_SLANG
-#include "../gfx/drivers_shader/glslang_util.cpp"
-#include "../gfx/drivers_shader/slang_preprocess.cpp"
+#include "../gfx/drivers_shader/glslang_util_cxx.cpp"
 #include "../gfx/drivers_shader/slang_process.cpp"
 #include "../gfx/drivers_shader/slang_reflection.cpp"
 #endif
@@ -92,10 +105,6 @@ VIDEO DRIVER
 /*============================================================
 FONTS
 ============================================================ */
-#if defined(_XBOX360)
-#include "../gfx/drivers_font/xdk360_fonts.cpp"
-#endif
-
 #ifdef WANT_GLSLANG
 #ifdef _WIN32
 #include "../deps/glslang/glslang/glslang/OSDependent/Windows/ossource.cpp"
@@ -112,11 +121,7 @@ FONTS
 #include "../deps/discord-rpc/src/serialization.cpp"
 
 #if defined(_WIN32)
-#include "../deps/discord-rpc/src/discord_register_win.cpp"
 #include "../deps/discord-rpc/src/connection_win.cpp"
-#endif
-#if defined(__linux__)
-#include "../deps/discord-rpc/src/discord_register_linux.cpp"
 #endif
 #if defined(__unix__) || defined(__APPLE__)
 #include "../deps/discord-rpc/src/connection_unix.cpp"

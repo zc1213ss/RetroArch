@@ -22,6 +22,8 @@
 
 #include "../drivers_shader/slang_process.h"
 
+#define D3D10_MAX_GPU_COUNT 16
+
 typedef const ID3D10SamplerState*       D3D10SamplerStateRef;
 
 typedef ID3D10InputLayout*       D3D10InputLayout;
@@ -50,7 +52,9 @@ typedef ID3D10Predicate*          D3D10Predicate;
 typedef ID3D10Counter*            D3D10Counter;
 typedef ID3D10Device*             D3D10Device;
 typedef ID3D10Multithread*        D3D10Multithread;
+#ifdef DEBUG
 typedef ID3D10Debug*              D3D10Debug;
+#endif
 typedef ID3D10SwitchToRef*        D3D10SwitchToRef;
 typedef ID3D10InfoQueue*          D3D10InfoQueue;
 
@@ -819,6 +823,7 @@ static INLINE BOOL D3D10GetMultithreadProtected(D3D10Multithread multithread)
 {
    return multithread->lpVtbl->GetMultithreadProtected(multithread);
 }
+#ifdef DEBUG
 static INLINE HRESULT D3D10SetDebugFeatureMask(D3D10Debug debug, UINT mask)
 {
    return debug->lpVtbl->SetFeatureMask(debug, mask);
@@ -844,6 +849,7 @@ static INLINE HRESULT D3D10GetSwapChain(D3D10Debug debug, IDXGISwapChain** swap_
    return debug->lpVtbl->GetSwapChain(debug, (IDXGISwapChain**)swap_chain);
 }
 static INLINE HRESULT D3D10Validate(D3D10Debug debug) { return debug->lpVtbl->Validate(debug); }
+#endif
 static INLINE BOOL    D3D10SetUseRef(D3D10SwitchToRef switch_to_ref, BOOL use_ref)
 {
    return switch_to_ref->lpVtbl->SetUseRef(switch_to_ref, use_ref);
@@ -1005,6 +1011,7 @@ static INLINE BOOL D3D10GetBreakOnID(D3D10InfoQueue info_queue, D3D10_MESSAGE_ID
 {
    return info_queue->lpVtbl->GetBreakOnID(info_queue, id);
 }
+#ifdef DEBUG
 static INLINE void D3D10SetMuteDebugOutput(D3D10InfoQueue info_queue, BOOL mute)
 {
    info_queue->lpVtbl->SetMuteDebugOutput(info_queue, mute);
@@ -1013,6 +1020,7 @@ static INLINE BOOL D3D10GetMuteDebugOutput(D3D10InfoQueue info_queue)
 {
    return info_queue->lpVtbl->GetMuteDebugOutput(info_queue);
 }
+#endif
 
 /* end of auto-generated */
 
@@ -1060,7 +1068,7 @@ static INLINE HRESULT D3D10CreateTexture2DShaderResourceView(
 #include <retro_math.h>
 #include <gfx/math/matrix_4x4.h>
 
-#include "../video_driver.h"
+#include "../../retroarch.h"
 
 typedef struct d3d10_vertex_t
 {
@@ -1117,9 +1125,6 @@ typedef struct ALIGN(16)
    float time;
 } d3d10_uniform_t;
 
-static_assert(
-      (!(sizeof(d3d10_uniform_t) & 0xF)), "sizeof(d3d10_uniform_t) must be a multiple of 16");
-
 typedef struct d3d10_shader_t
 {
    D3D10VertexShader   vs;
@@ -1154,6 +1159,12 @@ typedef struct
    bool                  resize_render_targets;
    bool                  init_history;
    d3d10_shader_t        shaders[GFX_MAX_SHADERS];
+#ifdef __WINRT__
+   DXGIFactory2 factory;
+#else
+   DXGIFactory factory;
+#endif
+   DXGIAdapter adapter;
 
 	struct
    {
@@ -1202,13 +1213,18 @@ typedef struct
       D3D10_VIEWPORT             viewport;
       pass_semantics_t           semantics;
       uint32_t                   frame_count;
+      int32_t                    frame_direction;
    } pass[GFX_MAX_SHADERS];
 
    struct video_shader* shader_preset;
    d3d10_texture_t      luts[GFX_MAX_TEXTURES];
+   struct string_list *gpu_list;
+   IDXGIAdapter1 *adapters[D3D10_MAX_GPU_COUNT];
+   IDXGIAdapter1 *current_adapter;
 } d3d10_video_t;
 
 void d3d10_init_texture(D3D10Device device, d3d10_texture_t* texture);
+
 static INLINE void d3d10_release_texture(d3d10_texture_t* texture)
 {
    Release(texture->handle);
